@@ -1,6 +1,6 @@
 # jj VFS Proof-of-Concept
 
-This project provides a proof-of-concept or reference implementation of a commit cloud for jj. It is beginning life as an intern project for one intern sponsored by Google. No guarantee of completeness, performance, or API stability is promised at this time.
+This project provides a proof-of-concept or reference implementation of a Virtual File System (VFS) for jj. It is beginning life as an intern project for one intern sponsored by Google. No guarantee of completeness, performance, or API stability is promised at this time.
 
 ## Source Code Headers
 
