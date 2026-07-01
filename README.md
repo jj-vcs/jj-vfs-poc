@@ -1,33 +1,6 @@
-# New Project Template
+# jj VFS Proof-of-Concept
 
-This repository contains a template that can be used to seed a repository for a
-new Google open source project.
-
-See [go/releasing](http://go/releasing) (available externally at
-https://opensource.google/documentation/reference/releasing) for more information about
-releasing a new Google open source project.
-
-This template uses the Apache license, as is Google's default.  See the
-documentation for instructions on using alternate license.
-
-## How to use this template
-
-1. Clone it from GitHub.
-    * There is no reason to fork it.
-1. Create a new local repository and copy the files from this repo into it.
-1. Modify README.md and docs/contributing.md to represent your project, not the
-   template project.
-1. Develop your new project!
-
-``` shell
-git clone https://github.com/google/new-project
-mkdir my-new-thing
-cd my-new-thing
-git init
-cp -r ../new-project/* ../new-project/.github .
-git add *
-git commit -a -m 'Boilerplate for new Google open source project'
-```
+This project provides a proof-of-concept or reference implementation of a commit cloud for jj. It is beginning life as an intern project for one intern sponsored by Google. No guarantee of completeness, performance, or API stability is promised at this time.
 
 ## Source Code Headers
 
@@ -38,7 +11,7 @@ doesn't comply with the license.)
 
 Apache header:
 
-    Copyright 2024 Google LLC
+    Copyright 2026 Google LLC
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.

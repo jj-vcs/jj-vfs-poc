@@ -1,6 +1,1 @@
-Fixes #<issue_number_goes_here>
-
-> It's a good idea to open an issue first for discussion.
-
-- [ ] Tests pass
-- [ ] Appropriate changes to documentation are included in the PR
+Please open an issue to discuss problems or ideas. Pull requests will not be accepted during initial development.
