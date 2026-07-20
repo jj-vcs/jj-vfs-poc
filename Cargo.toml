@@ -4,3 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-trait = "0.1.91"
+futures = "0.3.33"
+itertools = "0.15.0"
+jj-lib = "0.43.0"
+ustr = "1.1.0"
+
+[dev-dependencies]
+tempfile = "3"
+pollster = "0.4.0"
+
