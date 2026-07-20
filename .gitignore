@@ -1,0 +1,7 @@
+/target
+
+# Editor specific ignores
+.idea
+.vscode
+.zed
+
