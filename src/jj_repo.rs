@@ -10,7 +10,6 @@ use jj_lib::backend::TreeValue;
 use jj_lib::commit::Commit;
 use jj_lib::config::StackedConfig;
 use jj_lib::merge::Merge;
-use jj_lib::object_id::ObjectId;
 use jj_lib::repo::ReadonlyRepo;
 use jj_lib::repo::Repo;
 use jj_lib::repo::StoreFactories;
@@ -215,7 +214,6 @@ mod tests {
     use jj_lib::config::ConfigSource;
     use jj_lib::config::StackedConfig;
     use jj_lib::merge::Merge;
-    use jj_lib::object_id::ObjectId as _;
     use jj_lib::repo::Repo;
     use jj_lib::repo_path::RepoPathBuf;
     use jj_lib::settings::UserSettings;

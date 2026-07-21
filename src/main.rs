@@ -3,8 +3,8 @@
 #[allow(dead_code)]
 mod file;
 #[allow(dead_code)]
+mod inodes;
+#[allow(dead_code)]
 mod jj_repo;
 
-fn main() {
-    println!("Hello, world!");
-}
+fn main() {}
