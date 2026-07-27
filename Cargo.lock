@@ -1489,12 +1489,14 @@ dependencies = [
 name = "jjfsd"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures",
  "itertools 0.15.0",
  "jj-lib",
  "pollster",
  "tempfile",
+ "thiserror",
  "ustr",
 ]
 

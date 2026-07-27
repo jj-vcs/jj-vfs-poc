@@ -1,10 +1,14 @@
 use std::path::Path;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use anyhow::Result;
 use async_trait::async_trait;
 use futures::AsyncRead;
 use itertools::Itertools;
+use jj_lib::backend::BackendError;
+use jj_lib::backend::BackendResult;
 use jj_lib::backend::CommitId;
 use jj_lib::backend::TreeValue;
 use jj_lib::commit::Commit;
@@ -15,23 +19,40 @@ use jj_lib::repo::Repo;
 use jj_lib::repo::StoreFactories;
 use jj_lib::repo_path::RepoPathBuf;
 use jj_lib::repo_path::RepoPathComponentBuf;
+use jj_lib::revset::RevsetEvaluationError;
 use jj_lib::settings::UserSettings;
 use jj_lib::workspace::Workspace;
 use jj_lib::workspace::default_working_copy_factories;
+use thiserror::Error;
 
 use crate::file::File;
 use crate::file::FileType;
 
+#[derive(Error, Debug)]
+pub enum JjError {
+    #[error("The input path should not contain . or ..: {0}")]
+    InvalidPath(PathBuf),
+
+    #[error("File or directory not found: {0}")]
+    NotFound(PathBuf),
+
+    #[error("Expected file, but found directory: {0}")]
+    IsDirectory(PathBuf),
+
+    #[error("Underlying jj-lib error: {0}")]
+    JjLibBackendError(#[from] jj_lib::backend::BackendError),
+
+    #[error("{0}")]
+    Other(String),
+}
+
 /// This trait defines the possible interactions with the jj repository.
 pub trait JjRepo<JjCommitType: JjCommit> {
-    async fn get_commit(
-        &self,
-        commit_id: &CommitId,
-    ) -> Result<JjCommitType, Box<dyn std::error::Error>>;
+    async fn get_commit(&self, commit_id: &CommitId) -> BackendResult<JjLibCommit>;
 
     fn commits(
         &self,
-    ) -> Result<Pin<Box<dyn futures::Stream<Item = CommitId> + '_>>, Box<dyn std::error::Error>>;
+    ) -> Result<Pin<Box<dyn futures::Stream<Item = CommitId> + '_>>, RevsetEvaluationError>;
 }
 
 // Represents a jj repository on the local filesystem (used for the proof of
@@ -41,7 +62,7 @@ pub struct JjLibRepo {
 }
 
 impl JjLibRepo {
-    pub async fn from_path(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn from_path(path: impl AsRef<Path>) -> Result<Self> {
         let config = StackedConfig::with_defaults();
         let user_settings = UserSettings::from_config(config)?;
 
@@ -62,10 +83,7 @@ impl JjLibRepo {
 }
 
 impl JjRepo<JjLibCommit> for JjLibRepo {
-    async fn get_commit(
-        &self,
-        commit_id: &CommitId,
-    ) -> Result<JjLibCommit, Box<dyn std::error::Error>> {
+    async fn get_commit(&self, commit_id: &CommitId) -> BackendResult<JjLibCommit> {
         let commit = self.repo.store().get_commit_async(commit_id).await?;
 
         Ok(JjLibCommit { commit })
@@ -73,8 +91,7 @@ impl JjRepo<JjLibCommit> for JjLibRepo {
 
     fn commits(
         &self,
-    ) -> Result<Pin<Box<dyn futures::Stream<Item = CommitId> + '_>>, Box<dyn std::error::Error>>
-    {
+    ) -> Result<Pin<Box<dyn futures::Stream<Item = CommitId> + '_>>, RevsetEvaluationError> {
         use futures::StreamExt as _;
 
         let repo = self.repo.as_ref();
@@ -90,17 +107,11 @@ impl JjRepo<JjLibCommit> for JjLibRepo {
 /// Represents a single commit from a jj repository
 #[async_trait]
 pub trait JjCommit {
-    async fn list_directory(
-        &self,
-        path: &Path,
-    ) -> Result<Box<dyn Iterator<Item = File>>, Box<dyn std::error::Error>>;
+    async fn list_directory(&self, path: &Path) -> Result<Box<dyn Iterator<Item = File>>, JjError>;
 
-    async fn read_file(
-        &self,
-        path: &Path,
-    ) -> Result<Pin<Box<dyn AsyncRead + Send>>, Box<dyn std::error::Error>>;
+    async fn read_file(&self, path: &Path) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError>;
 
-    async fn file_size(&self, path: &Path) -> Result<u64, Box<dyn std::error::Error>>;
+    async fn file_size(&self, path: &Path) -> Result<u64, JjError>;
 }
 
 /// Implementation of JjCommit. Interacts with jj-lib.
@@ -108,21 +119,19 @@ pub struct JjLibCommit {
     commit: Commit,
 }
 
-// TODO: Implement proper error handling and use a custom error type throughout
 #[async_trait]
 impl JjCommit for JjLibCommit {
-    async fn list_directory(
-        &self,
-        path: &Path,
-    ) -> Result<Box<dyn Iterator<Item = File>>, Box<dyn std::error::Error>> {
-        let repo_path = RepoPathBuf::from_relative_path(path)?;
+    async fn list_directory(&self, path: &Path) -> Result<Box<dyn Iterator<Item = File>>, JjError> {
+        let repo_path = RepoPathBuf::from_relative_path(path)
+            .ok()
+            .ok_or_else(|| JjError::InvalidPath(path.to_path_buf()))?;
         let root_tree = self.commit.tree();
 
         let trees = root_tree.trees().await?;
         let sub_trees = trees
             .sub_tree_recursive(&repo_path)
             .await?
-            .ok_or_else(|| format!("Path {:?} not found", repo_path))?;
+            .ok_or_else(|| JjError::NotFound(path.to_path_buf()))?;
 
         let files: Vec<File> = sub_trees
             .iter()
@@ -152,34 +161,52 @@ impl JjCommit for JjLibCommit {
         Ok(Box::new(files.into_iter()))
     }
 
-    async fn file_size(&self, path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+    async fn file_size(&self, path: &Path) -> Result<u64, JjError> {
         let mut reader = self.read_file(path).await?;
 
         // TODO: we should be able to get the file size without having to read the
         // entire file (requires changes in jj-lib).
-        let size = futures::io::copy(&mut reader, &mut futures::io::sink()).await?;
+        let size = futures::io::copy(&mut reader, &mut futures::io::sink())
+            .await
+            // tolerating error of type "Other" for now since this function should be rewritten
+            // anyways in the future
+            .map_err(|e| BackendError::Other(Box::new(e)))?;
         Ok(size)
     }
 
-    async fn read_file(
-        &self,
-        path: &Path,
-    ) -> Result<Pin<Box<dyn AsyncRead + Send>>, Box<dyn std::error::Error>> {
-        let repo_path = RepoPathBuf::from_relative_path(path)?;
+    async fn read_file(&self, path: &Path) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError> {
+        let repo_path = RepoPathBuf::from_relative_path(path)
+            .ok()
+            .ok_or_else(|| JjError::InvalidPath(path.to_path_buf()))?;
         let root_tree = self.commit.tree();
         let merged_val = root_tree.path_value(&repo_path).await?;
 
         let tree_value = merged_val
             .as_resolved()
-            .ok_or("File has conflicts or is not fully resolved")? // TODO: Files with conflicts should also be readable
+            .ok_or_else(|| {
+                JjError::Other(format!(
+                    "{}: Conflicting files no supported",
+                    path.to_path_buf().to_str().unwrap()
+                ))
+            })? // TODO: Files with conflicts should also be readable
             .as_ref()
-            .ok_or_else(|| format!("File not found at path {:?}", path))?;
+            .ok_or_else(|| JjError::NotFound(path.to_path_buf()))?;
 
         let file_id = match tree_value {
             TreeValue::File { id, .. } => id,
-            TreeValue::Tree(_) => return Err("Path is a directory".into()),
-            TreeValue::Symlink(_) => return Err("Path is a symlink".into()),
-            TreeValue::GitSubmodule(_) => return Err("Path is a Git submodule".into()),
+            TreeValue::Tree(_) => return Err(JjError::IsDirectory(path.to_path_buf())),
+            TreeValue::Symlink(_) => {
+                return Err(JjError::Other(format!(
+                    "{}: Symlinks not supported",
+                    path.to_path_buf().to_str().unwrap()
+                )));
+            } // TODO: add symlinks support
+            TreeValue::GitSubmodule(_) => {
+                return Err(JjError::Other(format!(
+                    "{}: Git submodules not supported",
+                    path.to_path_buf().to_str().unwrap()
+                ))); // TODO: research on how to handle git submodules
+            }
         };
 
         let reader = self.commit.store().read_file(&repo_path, &file_id).await?;
@@ -273,6 +300,13 @@ mod tests {
             },
         );
 
+        let symlink_path = RepoPathBuf::from_relative_path(Path::new("symlink")).unwrap();
+        let symlink_id = store
+            .write_symlink(&symlink_path, "file1.txt")
+            .block_on()
+            .unwrap();
+        tree_builder.set(symlink_path, TreeValue::Symlink(symlink_id));
+
         let tree_id = tree_builder.write_tree().block_on().unwrap();
 
         // Write a commit pointing to this tree
@@ -325,11 +359,13 @@ mod tests {
             .block_on()
             .unwrap()
             .collect();
-        assert_eq!(root_files.len(), 2);
+        assert_eq!(root_files.len(), 3);
         assert_eq!(root_files[0].name, "dir");
         assert_eq!(root_files[0].file_type, FileType::Directory);
         assert_eq!(root_files[1].name, "file1.txt");
         assert_eq!(root_files[1].file_type, FileType::File);
+        assert_eq!(root_files[2].name, "symlink");
+        assert_eq!(root_files[2].file_type, FileType::File);
     }
 
     #[test]
@@ -397,5 +433,73 @@ mod tests {
             let commit = repo.get_commit(commit_id).block_on();
             assert!(commit.is_ok());
         }
+    }
+
+    #[test]
+    fn test_invalid_path() {
+        let (_temp_dir, jj_repo) = setup_test_repo();
+
+        let err = match jj_repo.list_directory(Path::new("some/../path")).block_on() {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error"),
+        };
+        assert!(matches!(err, JjError::InvalidPath(_)));
+
+        let err = match jj_repo.read_file(Path::new("some/../path")).block_on() {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error"),
+        };
+        assert!(matches!(err, JjError::InvalidPath(_)));
+
+        let err = match jj_repo.read_file(Path::new("some/../path")).block_on() {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error"),
+        };
+        assert!(matches!(err, JjError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn test_not_found() {
+        let (_temp_dir, jj_repo) = setup_test_repo();
+
+        let err = match jj_repo
+            .list_directory(Path::new("non_existent_dir"))
+            .block_on()
+        {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error"),
+        };
+        assert!(matches!(err, JjError::NotFound(_)));
+
+        let err = match jj_repo
+            .read_file(Path::new("non_existent_file.txt"))
+            .block_on()
+        {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error"),
+        };
+        assert!(matches!(err, JjError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_is_directory() {
+        let (_temp_dir, jj_repo) = setup_test_repo();
+
+        let err = match jj_repo.read_file(Path::new("dir")).block_on() {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error"),
+        };
+        assert!(matches!(err, JjError::IsDirectory(_)));
+    }
+
+    #[test]
+    fn test_is_symlink() {
+        let (_temp_dir, jj_repo) = setup_test_repo();
+
+        let err = match jj_repo.read_file(Path::new("symlink")).block_on() {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error"),
+        };
+        assert!(matches!(err, JjError::Other(_)));
     }
 }
