@@ -3,7 +3,13 @@
 #[allow(dead_code)]
 mod file;
 #[allow(dead_code)]
-mod jj_repo;
+mod jj_error;
+#[allow(dead_code)]
+mod mappers;
+#[allow(dead_code)]
+mod path_mapper;
+#[allow(dead_code)]
+mod vfs;
 
 fn main() {
     println!("Hello, world!");
