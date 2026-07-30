@@ -28,6 +28,21 @@ jobs:
           components: rustfmt
       - run: cargo +nightly fmt --all -- --check
 
+  check-clippy:
+    name: check (clippy)
+    permissions:
+      checks: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: stable
+          components: clippy
+      - run: cargo +stable clippy --all-features --workspace --all-targets -- -D warnings
+
   check:
     name: Check
     runs-on: ubuntu-latest
