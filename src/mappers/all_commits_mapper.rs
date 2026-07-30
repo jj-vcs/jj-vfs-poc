@@ -16,6 +16,12 @@ pub struct AllCommitsMapper {
     repo: Arc<ReadonlyRepo>,
 }
 
+impl AllCommitsMapper {
+    pub fn new(repo: Arc<ReadonlyRepo>) -> Self {
+        Self { repo }
+    }
+}
+
 #[async_trait]
 impl PathMapper for AllCommitsMapper {
     async fn get_entry(&self, path: &Path) -> Result<Box<dyn VirtualFile>, JjError> {
