@@ -3,6 +3,8 @@
 #[allow(dead_code)]
 mod file;
 #[allow(dead_code)]
+mod inode_map;
+#[allow(dead_code)]
 mod jj_error;
 #[allow(dead_code)]
 mod mappers;
