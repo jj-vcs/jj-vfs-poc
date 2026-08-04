@@ -14,9 +14,9 @@ use jj_lib::repo::ReadonlyRepo;
 use jj_lib::repo::Repo;
 use jj_lib::repo_path::RepoPathBuf;
 
-use crate::file::File;
-use crate::file::FileType;
 use crate::jj_error::JjError;
+use crate::path_mapper::DirectoryEntry;
+use crate::path_mapper::FileType;
 use crate::path_mapper::VirtualFile;
 
 pub struct CommitTreeFile {
@@ -67,7 +67,7 @@ impl VirtualFile for CommitTreeFile {
         Ok(size)
     }
 
-    async fn list<'a>(&'a self) -> Result<Box<dyn Stream<Item = File> + 'a>, JjError> {
+    async fn list<'a>(&'a self) -> Result<Box<dyn Stream<Item = DirectoryEntry> + 'a>, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
         let root_tree = self.commit.tree();
@@ -82,7 +82,7 @@ impl VirtualFile for CommitTreeFile {
             });
         };
 
-        let files: Vec<File> = sub_trees
+        let files: Vec<DirectoryEntry> = sub_trees
             .iter()
             .flat_map(|tree| tree.entries_non_recursive())
             .map(|entry| entry.name().to_owned())
@@ -102,7 +102,7 @@ impl VirtualFile for CommitTreeFile {
                     FileType::File
                 };
 
-                File::new(component.as_internal_str(), file_type)
+                DirectoryEntry::new(component.as_internal_str(), file_type)
             })
             .collect(); // TODO: No proper pagination here, since the entire iterator needs to be collected
 
@@ -130,15 +130,15 @@ mod tests {
             .unwrap();
 
         let stream = commit_tree.list().block_on().unwrap();
-        let root_files: Vec<File> = std::pin::Pin::from(stream).collect().block_on();
+        let root_files: Vec<DirectoryEntry> = std::pin::Pin::from(stream).collect().block_on();
 
         assert_eq!(root_files.len(), 3);
         assert_eq!(root_files[0].name, "dir");
-        assert_eq!(root_files[0].file_type, FileType::Directory);
+        assert!(matches!(root_files[0].file_type, FileType::Directory));
         assert_eq!(root_files[1].name, "file1.txt");
-        assert_eq!(root_files[1].file_type, FileType::File);
+        assert!(matches!(root_files[1].file_type, FileType::File));
         assert_eq!(root_files[2].name, "symlink");
-        assert_eq!(root_files[2].file_type, FileType::File);
+        assert!(matches!(root_files[2].file_type, FileType::File));
     }
 
     #[test]
@@ -149,11 +149,11 @@ mod tests {
             .unwrap();
 
         let stream = commit_tree.list().block_on().unwrap();
-        let dir_files: Vec<File> = std::pin::Pin::from(stream).collect().block_on();
+        let dir_files: Vec<DirectoryEntry> = std::pin::Pin::from(stream).collect().block_on();
 
         assert_eq!(dir_files.len(), 1);
         let file2 = dir_files.iter().find(|f| f.name == "file2.txt").unwrap();
-        assert_eq!(file2.file_type, FileType::File);
+        assert!(matches!(file2.file_type, FileType::File));
     }
 
     #[test]
