@@ -53,6 +53,16 @@ impl InodeMap {
         Ok(path)
     }
 
+    pub async fn get_parent_ino(&self, ino: u64) -> Result<u64, JjError> {
+        Ok(self
+            .inodes
+            .lock()
+            .await
+            .get(&ino)
+            .ok_or(JjError::NotFound)?
+            .parent)
+    }
+
     pub async fn get_ino(&self, parent: u64, name: &str) -> Result<u64, JjError> {
         let name = Ustr::from(name);
         let mut inodes = self.inodes.lock().await;
