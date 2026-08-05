@@ -31,10 +31,6 @@ impl VirtualFile for CommitsDirectory {
         Err(JjError::NotAFile)
     }
 
-    async fn size(&self) -> Result<u64, JjError> {
-        Ok(0)
-    }
-
     async fn list<'a>(&'a self) -> Result<Box<dyn Stream<Item = DirectoryEntry> + 'a>, JjError> {
         let expression = jj_lib::revset::ResolvedRevsetExpression::all();
         let revset = expression
@@ -45,6 +41,14 @@ impl VirtualFile for CommitsDirectory {
             .filter_map(|commit_id_res| futures::future::ready(commit_id_res.ok()))
             .map(|commit_id| DirectoryEntry::new(&commit_id.hex(), FileType::Directory));
         Ok(Box::new(stream))
+    }
+
+    async fn size(&self) -> Result<u64, JjError> {
+        Ok(0)
+    }
+
+    async fn file_type(&self) -> Result<FileType, JjError> {
+        Ok(FileType::Directory)
     }
 }
 
