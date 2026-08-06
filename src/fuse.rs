@@ -73,7 +73,7 @@ impl<P: PathMapper + 'static> Filesystem for JjVfs<P> {
             self,
             reply,
             async {
-                let ino = inodes.get_ino(parent.0, name.to_str().unwrap()).await?;
+                let ino = inodes.get_ino(parent, name.to_str().unwrap()).await?;
                 let path = inodes.get_path(ino).await?;
                 let virtual_file = path_mapper.get_entry(&path).await?;
                 let size = virtual_file.size().await?;
@@ -92,11 +92,11 @@ impl<P: PathMapper + 'static> Filesystem for JjVfs<P> {
             self,
             reply,
             async {
-                let path = inodes.get_path(ino.0).await?;
+                let path = inodes.get_path(ino).await?;
                 let virtual_file = path_mapper.get_entry(&path).await?;
                 let size = virtual_file.size().await?;
                 let file_type = virtual_file.file_type().await?;
-                let attr = create_attr(ino.0, size, file_type);
+                let attr = create_attr(ino, size, file_type);
                 Ok(attr)
             },
             |reply: ReplyAttr, attr| reply.attr(&TTL, &attr)
@@ -120,7 +120,7 @@ impl<P: PathMapper + 'static> Filesystem for JjVfs<P> {
             self,
             reply,
             async {
-                let path = inodes.get_path(ino.0).await?;
+                let path = inodes.get_path(ino).await?;
                 let virtual_file = path_mapper.get_entry(&path).await?;
                 let reader = virtual_file.read().await?;
                 let mut limited_stream = reader.take(offset); // TODO: handle proper seek()
@@ -156,14 +156,14 @@ impl<P: PathMapper + 'static> Filesystem for JjVfs<P> {
             self,
             reply,
             async {
-                let path = inodes.get_path(ino.0).await?;
+                let path = inodes.get_path(ino).await?;
                 let virtual_file = path_mapper.get_entry(&path).await?;
                 let entries = virtual_file.list().await?;
                 let entries = Box::into_pin(entries);
 
                 if offset < 2 {
-                    let parent_ino = inodes.get_parent_ino(ino.0).await?;
-                    if reply.add(INodeNo(parent_ino), 2, fuser::FileType::Directory, "..") {
+                    let parent_ino = inodes.get_parent_ino(ino).await?;
+                    if reply.add(parent_ino, 2, fuser::FileType::Directory, "..") {
                         return Ok(());
                     }
                 }
@@ -176,9 +176,9 @@ impl<P: PathMapper + 'static> Filesystem for JjVfs<P> {
                         FileType::Directory => fuser::FileType::Directory,
                         FileType::File => fuser::FileType::RegularFile,
                     };
-                    let child_ino = inodes.get_ino(ino.0, name).await?;
+                    let child_ino = inodes.get_ino(ino, name).await?;
                     let entry_offset = skip_count + stream_index as u64 + 3;
-                    if reply.add(INodeNo(child_ino), entry_offset, kind, name) {
+                    if reply.add(child_ino, entry_offset, kind, name) {
                         break;
                     }
                 }
@@ -193,9 +193,9 @@ impl<P: PathMapper + 'static> Filesystem for JjVfs<P> {
     }
 }
 
-fn create_attr(ino: u64, size: u64, file_type: FileType) -> FileAttr {
+fn create_attr(ino: INodeNo, size: u64, file_type: FileType) -> FileAttr {
     FileAttr {
-        ino: INodeNo(ino),
+        ino,
         size,
         blocks: size.div_ceil(512),
         atime: UNIX_EPOCH, // TODO: properly set timestamps
