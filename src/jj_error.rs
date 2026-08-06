@@ -14,9 +14,9 @@ pub enum JjError {
     #[error("Expected a file, but found a directory")]
     NotAFile,
 
+    #[error("{0}")]
+    IO(#[from] Box<dyn std::error::Error>),
+
     #[error("Underlying jj-lib error: {0}")]
     JjLibBackendError(#[from] jj_lib::backend::BackendError),
-
-    #[error("{0}")]
-    Other(String),
 }

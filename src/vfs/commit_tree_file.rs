@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use futures::AsyncRead;
 use futures::Stream;
 use itertools::Itertools;
-use jj_lib::backend::BackendError;
 use jj_lib::backend::CommitId;
 use jj_lib::backend::TreeValue;
 use jj_lib::commit::Commit;
@@ -54,19 +53,6 @@ impl VirtualFile for CommitTreeFile {
         Ok(reader)
     }
 
-    async fn size(&self) -> Result<u64, JjError> {
-        let mut reader = self.read().await?;
-
-        // TODO: we should be able to get the file size without having to read the
-        // entire file (requires changes in jj-lib).
-        let size = futures::io::copy(&mut reader, &mut futures::io::sink())
-            .await
-            // tolerating error of type "Other" for now since this function should be rewritten
-            // anyways in the future
-            .map_err(|e| BackendError::Other(Box::new(e)))?;
-        Ok(size)
-    }
-
     async fn list<'a>(&'a self) -> Result<Box<dyn Stream<Item = DirectoryEntry> + 'a>, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
@@ -107,6 +93,42 @@ impl VirtualFile for CommitTreeFile {
             .collect(); // TODO: No proper pagination here, since the entire iterator needs to be collected
 
         Ok(Box::new(futures::stream::iter(files)))
+    }
+
+    async fn size(&self) -> Result<u64, JjError> {
+        if matches!(self.file_type().await?, FileType::Directory) {
+            return Ok(0);
+        }
+
+        let mut reader = self.read().await?;
+
+        // TODO: we should be able to get the file size without having to read the
+        // entire file (requires changes in jj-lib).
+        let size = futures::io::copy(&mut reader, &mut futures::io::sink())
+            .await
+            .map_err(|e| JjError::IO(Box::new(e)))?;
+        Ok(size)
+    }
+
+    async fn file_type(&self) -> Result<FileType, JjError> {
+        let repo_path =
+            RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
+        let merged_val = self.commit.tree().path_value(&repo_path).await?;
+
+        let resolved_val =
+            merged_val
+                .as_resolved()
+                .ok_or(JjError::IO(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Conflicted path", /* TODO: support file conflicts to be shown in the
+                                        * filesystem */
+                ))))?;
+        let file_type = match resolved_val {
+            Some(TreeValue::Tree(_)) => FileType::Directory,
+            Some(TreeValue::File { .. }) => FileType::File,
+            _ => FileType::File, // TODO: Handle all file types
+        };
+        Ok(file_type)
     }
 }
 
@@ -266,5 +288,24 @@ mod tests {
             Ok(_) => panic!("Expected an error"),
         };
         assert!(matches!(err, JjError::NotADirectory));
+    }
+
+    #[test]
+    fn test_file_type() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo();
+
+        let commit_tree_dir =
+            CommitTreeFile::new(repo.as_ref(), commit_id.clone(), PathBuf::from("dir"))
+                .block_on()
+                .unwrap();
+        let type_dir = commit_tree_dir.file_type().block_on().unwrap();
+        assert!(matches!(type_dir, FileType::Directory));
+
+        let commit_tree_file =
+            CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("file1.txt"))
+                .block_on()
+                .unwrap();
+        let type_file = commit_tree_file.file_type().block_on().unwrap();
+        assert!(matches!(type_file, FileType::File));
     }
 }
