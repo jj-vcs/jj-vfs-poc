@@ -53,7 +53,9 @@ impl VirtualFile for CommitTreeFile {
         Ok(reader)
     }
 
-    async fn list<'a>(&'a self) -> Result<Box<dyn Stream<Item = DirectoryEntry> + 'a>, JjError> {
+    async fn list<'a>(
+        &'a self,
+    ) -> Result<Box<dyn Stream<Item = DirectoryEntry> + Send + 'a>, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
         let root_tree = self.commit.tree();

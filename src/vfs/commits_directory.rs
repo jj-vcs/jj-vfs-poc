@@ -31,16 +31,25 @@ impl VirtualFile for CommitsDirectory {
         Err(JjError::NotAFile)
     }
 
-    async fn list<'a>(&'a self) -> Result<Box<dyn Stream<Item = DirectoryEntry> + 'a>, JjError> {
+    async fn list<'a>(
+        &'a self,
+    ) -> Result<Box<dyn Stream<Item = DirectoryEntry> + Send + 'a>, JjError> {
         let expression = jj_lib::revset::ResolvedRevsetExpression::all();
         let revset = expression
             .evaluate(self.repo.as_ref())
             .map_err(|e| e.into_backend_error())?;
-        let stream = revset
-            .stream()
-            .filter_map(|commit_id_res| futures::future::ready(commit_id_res.ok()))
-            .map(|commit_id| DirectoryEntry::new(&commit_id.hex(), FileType::Directory));
-        Ok(Box::new(stream))
+        // Revset does not implement Send, meaning it cannot be sent across threads. We
+        // use blocking for now since this will be rewritten in the future anyways (to a
+        // version that doesn't list all commits)
+        let commits: Vec<DirectoryEntry> = futures::executor::block_on(async {
+            revset
+                .stream()
+                .filter_map(|commit_id_res| futures::future::ready(commit_id_res.ok()))
+                .map(|commit_id| DirectoryEntry::new(&commit_id.hex(), FileType::Directory))
+                .collect()
+                .await
+        }); // TODO: currently there is no proper pagination implemented here
+        Ok(Box::new(futures::stream::iter(commits)))
     }
 
     async fn size(&self) -> Result<u64, JjError> {

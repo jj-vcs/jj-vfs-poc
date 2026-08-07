@@ -38,7 +38,9 @@ impl DirectoryEntry {
 #[async_trait]
 pub trait VirtualFile: Send + Sync {
     async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError>;
-    async fn list<'a>(&'a self) -> Result<Box<dyn Stream<Item = DirectoryEntry> + 'a>, JjError>;
+    async fn list<'a>(
+        &'a self,
+    ) -> Result<Box<dyn Stream<Item = DirectoryEntry> + Send + 'a>, JjError>;
     async fn size(&self) -> Result<u64, JjError>;
     async fn file_type(&self) -> Result<FileType, JjError>;
 }
