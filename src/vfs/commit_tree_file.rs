@@ -106,9 +106,7 @@ impl VirtualFile for CommitTreeFile {
 
         // TODO: we should be able to get the file size without having to read the
         // entire file (requires changes in jj-lib).
-        let size = futures::io::copy(&mut reader, &mut futures::io::sink())
-            .await
-            .map_err(|e| JjError::IO(Box::new(e)))?;
+        let size = futures::io::copy(&mut reader, &mut futures::io::sink()).await?;
         Ok(size)
     }
 
@@ -117,14 +115,11 @@ impl VirtualFile for CommitTreeFile {
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
         let merged_val = self.commit.tree().path_value(&repo_path).await?;
 
-        let resolved_val =
-            merged_val
-                .as_resolved()
-                .ok_or(JjError::IO(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Conflicted path", /* TODO: support file conflicts to be shown in the
-                                        * filesystem */
-                ))))?;
+        let resolved_val = merged_val.as_resolved().ok_or(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Conflicted path", /* TODO: support file conflicts to be shown in the
+                                * filesystem */
+        ))?;
         let file_type = match resolved_val {
             Some(TreeValue::Tree(_)) => FileType::Directory,
             Some(TreeValue::File { .. }) => FileType::File,
