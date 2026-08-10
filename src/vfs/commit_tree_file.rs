@@ -3,7 +3,6 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use futures::AsyncRead;
-use futures::Stream;
 use itertools::Itertools;
 use jj_lib::backend::CommitId;
 use jj_lib::backend::TreeValue;
@@ -15,6 +14,7 @@ use jj_lib::repo_path::RepoPathBuf;
 
 use crate::jj_error::JjError;
 use crate::path_mapper::DirectoryEntry;
+use crate::path_mapper::DirectoryStream;
 use crate::path_mapper::FileType;
 use crate::path_mapper::VirtualFile;
 
@@ -53,9 +53,7 @@ impl VirtualFile for CommitTreeFile {
         Ok(reader)
     }
 
-    async fn list<'a>(
-        &'a self,
-    ) -> Result<Box<dyn Stream<Item = DirectoryEntry> + Send + 'a>, JjError> {
+    async fn list(&self) -> Result<DirectoryStream, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
         let root_tree = self.commit.tree();
@@ -94,7 +92,7 @@ impl VirtualFile for CommitTreeFile {
             })
             .collect(); // TODO: No proper pagination here, since the entire iterator needs to be collected
 
-        Ok(Box::new(futures::stream::iter(files)))
+        Ok(Box::pin(futures::stream::iter(files)))
     }
 
     async fn size(&self) -> Result<u64, JjError> {
@@ -149,7 +147,7 @@ mod tests {
             .unwrap();
 
         let stream = commit_tree.list().block_on().unwrap();
-        let root_files: Vec<DirectoryEntry> = std::pin::Pin::from(stream).collect().block_on();
+        let root_files: Vec<DirectoryEntry> = stream.collect().block_on();
 
         assert_eq!(root_files.len(), 3);
         assert_eq!(root_files[0].name, "dir");
@@ -168,7 +166,7 @@ mod tests {
             .unwrap();
 
         let stream = commit_tree.list().block_on().unwrap();
-        let dir_files: Vec<DirectoryEntry> = std::pin::Pin::from(stream).collect().block_on();
+        let dir_files: Vec<DirectoryEntry> = stream.collect().block_on();
 
         assert_eq!(dir_files.len(), 1);
         let file2 = dir_files.iter().find(|f| f.name == "file2.txt").unwrap();

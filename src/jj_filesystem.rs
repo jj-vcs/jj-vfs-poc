@@ -5,12 +5,15 @@ use fuser::FileAttr; /* TODO: This file should not depend on fuser at all. Leavi
                        * now for simplicity. */
 use futures::StreamExt as _;
 use futures::io::AsyncReadExt as _;
+use futures::stream::BoxStream;
 
 use crate::inode_map::InodeMap;
 use crate::jj_error::JjError;
 use crate::path_mapper::DirectoryEntry;
 use crate::path_mapper::FileType;
 use crate::path_mapper::PathMapper;
+
+pub type ReaddirStream = BoxStream<'static, Result<(u64, DirectoryEntry), JjError>>;
 
 /// Middle-layer filesystem abstraction representing inode-based VFS operations.
 /// This trait acts as the intermediate layer between the FUSE filesystem layer
@@ -19,10 +22,7 @@ trait JjFilesystem {
     async fn lookup(&self, parent: u64, name: &str) -> Result<FileAttr, JjError>;
     async fn getattr(&self, ino: u64) -> Result<FileAttr, JjError>;
     async fn read(&self, ino: u64, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
-    async fn readdir<F>(&self, ino: u64, offset: u64, f: F) -> Result<(), JjError>
-    where
-        Self: Sized,
-        F: FnMut((u64, DirectoryEntry)) -> bool;
+    async fn readdir(&self, ino: u64, offset: u64) -> Result<ReaddirStream, JjError>;
 }
 
 pub struct JjVfsState<P: PathMapper> {
@@ -65,43 +65,38 @@ impl<P: PathMapper> JjFilesystem for JjVfsState<P> {
         Ok(content.into())
     }
 
-    // TODO: for now readdir takes callback function f() for iterating through
-    // directory entries for easier implementation. readdir() should be fully
-    // refactored in a separate PR.
-    async fn readdir<F>(&self, ino: u64, offset: u64, mut f: F) -> Result<(), JjError>
-    where
-        F: FnMut((u64, DirectoryEntry)) -> bool,
-    {
-        if offset < 2 {
-            if offset < 1 && f((ino, DirectoryEntry::new(".", FileType::Directory))) {
-                return Ok(());
-            }
+    async fn readdir(&self, ino: u64, offset: u64) -> Result<ReaddirStream, JjError> {
+        let mut prefix = Vec::with_capacity(2);
+        if offset < 1 {
+            prefix.push(Ok((ino, DirectoryEntry::new(".", FileType::Directory))));
+        }
 
-            if f((
-                self.inodes.get_parent_ino(ino).await?,
+        if offset < 2 {
+            let parent_ino = self.inodes.get_parent_ino(ino).await?;
+            prefix.push(Ok((
+                parent_ino,
                 DirectoryEntry::new("..", FileType::Directory),
-            )) {
-                return Ok(());
-            }
+            )));
         }
 
         let path = self.inodes.get_path(ino).await?;
         let virtual_file = self.path_mapper.get_entry(&path).await?;
         let stream = virtual_file.list().await?;
-        let stream = Box::into_pin(stream);
         let skip_count = offset.saturating_sub(2) as usize;
 
-        let mut skipped_stream = stream.skip(skip_count);
-        while let Some(entry) = skipped_stream.next().await {
-            let name = entry.name.as_str();
-            let file_type = entry.file_type;
-            let child_ino = self.inodes.get_ino(ino, name).await?;
-            if f((child_ino, DirectoryEntry::new(name, file_type))) {
-                break;
+        let skipped_stream = stream.skip(skip_count);
+        let inodes = self.inodes.clone();
+        let mapped_stream = skipped_stream.then(move |entry| {
+            let inodes = inodes.clone();
+            async move {
+                let child_ino = inodes.get_ino(ino, entry.name.as_str()).await?;
+                Ok((child_ino, entry))
             }
-        }
+        });
 
-        Ok(())
+        let prefix_stream = futures::stream::iter(prefix);
+        let full_stream = prefix_stream.chain(mapped_stream);
+        Ok(Box::pin(full_stream))
     }
 }
 
@@ -142,12 +137,13 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use futures::Stream;
     use futures::io::Cursor;
     use futures::stream;
+    use pollster::FutureExt;
 
     use super::*;
     use crate::path_mapper::DirectoryEntry;
+    use crate::path_mapper::DirectoryStream;
     use crate::path_mapper::VirtualFile;
 
     enum MockVirtualFile {
@@ -164,9 +160,7 @@ mod tests {
             }
         }
 
-        async fn list<'a>(
-            &'a self,
-        ) -> Result<Box<dyn Stream<Item = DirectoryEntry> + Send + 'a>, JjError> {
+        async fn list(&self) -> Result<DirectoryStream, JjError> {
             match &**self {
                 MockVirtualFile::Directory(entries) => {
                     let children = entries
@@ -179,7 +173,8 @@ mod tests {
                             DirectoryEntry::new(name, file_type)
                         })
                         .collect::<Vec<_>>();
-                    Ok(Box::new(stream::iter(children)))
+                    let stream: DirectoryStream = Box::pin(stream::iter(children));
+                    Ok(stream)
                 }
                 MockVirtualFile::File(_) => Err(JjError::NotADirectory),
             }
@@ -246,61 +241,85 @@ mod tests {
     #[test]
     fn test_read_root_file() {
         let fs = setup_test_vfs();
-        let attr = futures::executor::block_on(fs.lookup(1, "file.txt")).unwrap();
-        let content = futures::executor::block_on(fs.read(attr.ino.0, 0, 11)).unwrap();
+        let attr = fs.lookup(1, "file.txt").block_on().unwrap();
+        let content = fs.read(attr.ino.0, 0, 11).block_on().unwrap();
         assert_eq!(&*content, b"hello world");
     }
 
     #[test]
     fn test_read_nested_file() {
         let fs = setup_test_vfs();
-        let dir_attr = futures::executor::block_on(fs.lookup(1, "dir")).unwrap();
-        let file_attr =
-            futures::executor::block_on(fs.lookup(dir_attr.ino.0, "nested.txt")).unwrap();
-        let content = futures::executor::block_on(fs.read(file_attr.ino.0, 0, 14)).unwrap();
+        let dir_attr = fs.lookup(1, "dir").block_on().unwrap();
+        let file_attr = fs.lookup(dir_attr.ino.0, "nested.txt").block_on().unwrap();
+        let content = fs.read(file_attr.ino.0, 0, 14).block_on().unwrap();
         assert_eq!(&*content, b"nested content");
     }
 
     #[test]
     fn test_list_directory() {
         let fs = setup_test_vfs();
-        let dir_attr = futures::executor::block_on(fs.lookup(1, "dir")).unwrap();
+        let dir_attr = fs.lookup(1, "dir").block_on().unwrap();
 
-        let mut entries = Vec::new();
-        futures::executor::block_on(fs.readdir(dir_attr.ino.0, 0, |(child_ino, entry)| {
-            entries.push((child_ino, entry.name, entry.file_type));
-            false
-        }))
-        .unwrap();
+        let entries: Vec<_> = fs
+            .readdir(dir_attr.ino.0, 0)
+            .block_on()
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+            .block_on();
 
         assert_eq!(entries.len(), 3);
 
-        assert_eq!(entries[0].1, ".");
-        assert_eq!(entries[0].0, dir_attr.ino.0);
-        assert!(matches!(entries[0].2, FileType::Directory));
+        let mut iter = entries.into_iter();
 
-        assert_eq!(entries[1].1, "..");
-        assert_eq!(entries[1].0, 1);
-        assert!(matches!(entries[1].2, FileType::Directory));
+        let entry0 = iter.next().unwrap();
+        assert_eq!(entry0.0, dir_attr.ino.0);
+        assert_eq!(entry0.1.name, ".");
+        assert!(matches!(entry0.1.file_type, FileType::Directory));
 
-        assert_eq!(entries[2].1, "nested.txt");
-        assert!(matches!(entries[2].2, FileType::File));
+        let entry1 = iter.next().unwrap();
+        assert_eq!(entry1.0, 1);
+        assert_eq!(entry1.1.name, "..");
+        assert!(matches!(entry1.1.file_type, FileType::Directory));
+
+        let entry2 = iter.next().unwrap();
+        assert_eq!(entry2.1.name, "nested.txt");
+        assert!(matches!(entry2.1.file_type, FileType::File));
+
+        assert!(iter.next().is_none());
     }
 
     #[test]
     fn test_list_directory_with_offset() {
         let fs = setup_test_vfs();
-        let dir_attr = futures::executor::block_on(fs.lookup(1, "dir")).unwrap();
+        let dir_attr = fs.lookup(1, "dir").block_on().unwrap();
 
-        let mut entries = Vec::new();
-        futures::executor::block_on(fs.readdir(dir_attr.ino.0, 2, |(child_ino, entry)| {
-            entries.push((child_ino, entry.name, entry.file_type));
-            false
-        }))
-        .unwrap();
+        let entries: Vec<_> = fs
+            .readdir(dir_attr.ino.0, 2)
+            .block_on()
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+            .block_on();
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].1, "nested.txt");
-        assert!(matches!(entries[0].2, FileType::File));
+        let entry0 = entries.into_iter().next().unwrap();
+        assert_eq!(entry0.1.name, "nested.txt");
+        assert!(matches!(entry0.1.file_type, FileType::File));
+    }
+
+    #[test]
+    fn test_list_directory_not_a_directory() {
+        let fs = setup_test_vfs();
+        let file_attr = fs.lookup(1, "file.txt").block_on().unwrap();
+        let result = fs.readdir(file_attr.ino.0, 0).block_on();
+        assert!(matches!(result, Err(JjError::NotADirectory)));
+    }
+
+    #[test]
+    fn test_list_directory_not_found() {
+        let fs = setup_test_vfs();
+        let result = fs.readdir(9999, 0).block_on();
+        assert!(matches!(result, Err(JjError::NotFound)));
     }
 }
