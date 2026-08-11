@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
+use async_trait::async_trait;
 use fuser::FileAttr; /* TODO: This file should not depend on fuser at all. Leaving it for
                        * now for simplicity. */
 use futures::StreamExt as _;
@@ -18,7 +19,8 @@ pub type ReaddirStream = BoxStream<'static, Result<(u64, DirectoryEntry), JjErro
 /// Middle-layer filesystem abstraction representing inode-based VFS operations.
 /// This trait acts as the intermediate layer between the FUSE filesystem layer
 /// and the path mapper.
-trait JjFilesystem {
+#[async_trait]
+pub trait JjFilesystem {
     async fn lookup(&self, parent: u64, name: &str) -> Result<FileAttr, JjError>;
     async fn getattr(&self, ino: u64) -> Result<FileAttr, JjError>;
     async fn read(&self, ino: u64, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
@@ -39,6 +41,7 @@ impl<P: PathMapper> JjVfsState<P> {
     }
 }
 
+#[async_trait]
 impl<P: PathMapper> JjFilesystem for JjVfsState<P> {
     async fn lookup(&self, parent: u64, name: &str) -> Result<FileAttr, JjError> {
         let ino = self.inodes.get_ino(parent, name).await?;
@@ -109,10 +112,7 @@ fn create_attr(ino: u64, size: u64, file_type: FileType) -> FileAttr {
         mtime: UNIX_EPOCH,
         ctime: UNIX_EPOCH,
         crtime: UNIX_EPOCH,
-        kind: match file_type {
-            FileType::File => fuser::FileType::RegularFile,
-            FileType::Directory => fuser::FileType::Directory,
-        },
+        kind: file_type.into(),
         perm: match file_type {
             FileType::Directory => 0o755,
             _ => 0o644,
