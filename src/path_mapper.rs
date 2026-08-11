@@ -3,7 +3,7 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use futures::AsyncRead;
-use futures::Stream;
+use futures::stream::BoxStream;
 use ustr::Ustr;
 
 use crate::jj_error::JjError;
@@ -27,6 +27,8 @@ impl DirectoryEntry {
     }
 }
 
+pub type DirectoryStream = BoxStream<'static, DirectoryEntry>;
+
 /// This trait represents a file in our virtual file system. This can either be
 /// a normal file you can read from or for example a directory, in which case
 /// you can list its contents.
@@ -38,9 +40,7 @@ impl DirectoryEntry {
 #[async_trait]
 pub trait VirtualFile: Send + Sync {
     async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError>;
-    async fn list<'a>(
-        &'a self,
-    ) -> Result<Box<dyn Stream<Item = DirectoryEntry> + Send + 'a>, JjError>;
+    async fn list(&self) -> Result<DirectoryStream, JjError>;
     async fn size(&self) -> Result<u64, JjError>;
     async fn file_type(&self) -> Result<FileType, JjError>;
 }
