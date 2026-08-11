@@ -1,22 +1,12 @@
-mod fuse;
-mod inode_map;
-mod jj_error;
-mod jj_filesystem;
-mod mappers;
-mod path_mapper;
-mod vfs;
-
 use std::sync::Arc;
 
-use jj_filesystem::JjVfsState;
 use jj_lib::config::StackedConfig;
 use jj_lib::repo::StoreFactories;
 use jj_lib::settings::UserSettings;
 use jj_lib::workspace::Workspace;
 use jj_lib::workspace::default_working_copy_factories;
-use mappers::all_commits_mapper::AllCommitsMapper;
-
-use crate::fuse::JjFuse;
+use jjfsd::jj_filesystem::JjVfsState;
+use jjfsd::mappers::all_commits_mapper::AllCommitsMapper;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -57,7 +47,7 @@ fn main() {
 
     println!("Mounting JjVfs at {}...", mountpoint);
     let _session = fuser::spawn_mount(
-        JjFuse::new(Arc::new(filesystem), rt.handle().clone()),
+        jjfsd::fuse::JjFuse::new(Arc::new(filesystem), rt.handle().clone()),
         mountpoint,
         &config,
     )
