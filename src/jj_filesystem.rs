@@ -58,15 +58,10 @@ impl<P: PathMapper> JjFilesystem for JjVfsState<P> {
         let virtual_file = self.path_mapper.get_entry(&path).await?;
         let reader = virtual_file.read().await?;
         let mut limited_stream = reader.take(offset); // TODO: handle proper seek()
-        futures::io::copy(&mut limited_stream, &mut futures::io::sink())
-            .await
-            .map_err(|e| JjError::IO(Box::new(e)))?;
+        futures::io::copy(&mut limited_stream, &mut futures::io::sink()).await?;
         let mut original_reader = limited_stream.into_inner();
         let mut content = Vec::with_capacity(size as usize);
-        original_reader
-            .read_to_end(&mut content)
-            .await
-            .map_err(|e| JjError::IO(Box::new(e)))?;
+        original_reader.read_to_end(&mut content).await?;
         Ok(content.into())
     }
 
