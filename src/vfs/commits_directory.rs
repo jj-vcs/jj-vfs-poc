@@ -8,10 +8,10 @@ use jj_lib::object_id::ObjectId;
 use jj_lib::repo::ReadonlyRepo;
 
 use crate::jj_error::JjError;
-use crate::path_mapper::DirectoryEntry;
-use crate::path_mapper::DirectoryStream;
-use crate::path_mapper::FileType;
-use crate::path_mapper::VirtualFile;
+use crate::virtual_file::DirectoryEntry;
+use crate::virtual_file::DirectoryStream;
+use crate::virtual_file::FileType;
+use crate::virtual_file::VirtualFile;
 
 /// This is a `VirtualFile` that represents a directory where all the commits
 /// are listed, with each commit being a separate directory.

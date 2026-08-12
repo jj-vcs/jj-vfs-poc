@@ -7,7 +7,7 @@ use jj_lib::object_id::ObjectId as _;
 use jjfsd::jj_filesystem::JjFilesystem;
 use jjfsd::jj_filesystem::JjVfsState;
 use jjfsd::mappers::all_commits_mapper::AllCommitsMapper;
-use jjfsd::path_mapper::FileType;
+use jjfsd::virtual_file::FileType;
 use pollster::FutureExt as _;
 
 #[test]
