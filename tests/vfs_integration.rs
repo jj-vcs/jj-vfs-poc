@@ -1,11 +1,13 @@
 mod test_helpers;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use jj_lib::object_id::ObjectId as _;
 use jjfsd::jj_filesystem::JjFilesystem;
 use jjfsd::jj_filesystem::JjVfsState;
 use jjfsd::mappers::all_commits_mapper::AllCommitsMapper;
+use jjfsd::path_mapper::FileType;
 use pollster::FutureExt as _;
 
 #[test]
@@ -23,45 +25,46 @@ fn test_vfs_read_real_repo_files() {
 
     // In JjVfsState, looking up a child of root (parent = 1) is done by name:
     let commit_dir_attr = fs
-        .lookup(1, &commit_hex)
+        .getattr(Path::new(&commit_hex))
         .block_on()
         .expect("Failed to lookup commit directory");
 
     // Verify it is indeed a directory (kind = Directory)
-    assert_eq!(commit_dir_attr.kind, fuser::FileType::Directory);
+    assert!(matches!(commit_dir_attr.1, FileType::Directory));
 
     // 4. Look up "file1.txt" inside the commit directory
     let file1_attr = fs
-        .lookup(commit_dir_attr.ino.0, "file1.txt")
+        .getattr(Path::new(&format!("{}/file1.txt", commit_hex)))
         .block_on()
         .expect("Failed to lookup file1.txt");
-    assert_eq!(file1_attr.kind, fuser::FileType::RegularFile);
-    assert_eq!(file1_attr.size, 15); // "hello content 1" is 15 bytes
+    assert!(matches!(file1_attr.1, FileType::File));
+    assert_eq!(file1_attr.0, 15); // "hello content 1" is 15 bytes
 
     // 5. Read the content of "file1.txt"
     let content = fs
-        .read(file1_attr.ino.0, 0, 15)
+        .read(Path::new(&format!("{}/file1.txt", commit_hex)), 0, 15)
         .block_on()
         .expect("Failed to read file1.txt");
     assert_eq!(&*content, b"hello content 1");
 
     // 6. Look up "dir" inside the commit directory
     let dir_attr = fs
-        .lookup(commit_dir_attr.ino.0, "dir")
+        .getattr(Path::new(&format!("{}/dir", commit_hex)))
         .block_on()
         .expect("Failed to lookup dir");
-    assert_eq!(dir_attr.kind, fuser::FileType::Directory);
+    assert!(matches!(dir_attr.1, FileType::Directory));
 
     // 7. Look up "file2.txt" inside "dir"
     let file2_attr = fs
-        .lookup(dir_attr.ino.0, "file2.txt")
+        .getattr(Path::new(&format!("{}/dir/file2.txt", commit_hex)))
         .block_on()
         .expect("Failed to lookup file2.txt");
-    assert_eq!(file2_attr.kind, fuser::FileType::RegularFile);
+    assert!(matches!(file2_attr.1, FileType::File));
+    assert_eq!(file2_attr.0, 15); // "hello content 2" is 15 bytes
 
     // 8. Read the content of "file2.txt"
     let content2 = fs
-        .read(file2_attr.ino.0, 0, 15)
+        .read(Path::new(&format!("{}/dir/file2.txt", commit_hex)), 0, 15)
         .block_on()
         .expect("Failed to read file2.txt");
     assert_eq!(&*content2, b"hello content 2");

@@ -1,10 +1,13 @@
 use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::UNIX_EPOCH;
 
 use fuser::*;
 use futures::StreamExt as _;
+use futures::stream;
 
+use crate::inode_map::InodeMap;
 use crate::jj_error::JjError;
 use crate::jj_filesystem::JjFilesystem;
 
@@ -29,12 +32,17 @@ macro_rules! reply_async {
 
 pub struct JjFuse<FS: JjFilesystem> {
     fs: Arc<FS>,
+    inode_map: Arc<InodeMap>,
     rt_handle: tokio::runtime::Handle,
 }
 
 impl<FS: JjFilesystem> JjFuse<FS> {
     pub fn new(fs: Arc<FS>, rt_handle: tokio::runtime::Handle) -> Self {
-        Self { fs, rt_handle }
+        Self {
+            fs,
+            inode_map: Arc::new(InodeMap::new()),
+            rt_handle,
+        }
     }
 }
 
@@ -48,13 +56,18 @@ impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let fs = self.fs.clone();
+        let inode_map = self.inode_map.clone();
         let name = name.to_os_string();
         reply_async!(
             self,
             reply,
             async move {
-                let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
-                fs.lookup(parent.into(), name_str).await
+                let ino = inode_map
+                    .get_ino(parent, name.to_str().ok_or(JjError::InvalidPath)?)
+                    .await?;
+                let path = inode_map.get_path(ino).await?;
+                let (size, file_type) = fs.getattr(&path).await?;
+                Ok(create_attr(ino, size, file_type))
             },
             |reply: ReplyEntry, attr| reply.entry(&TTL, &attr, fuser::Generation(0))
         );
@@ -62,10 +75,15 @@ impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         let fs = self.fs.clone();
+        let inode_map = self.inode_map.clone();
         reply_async!(
             self,
             reply,
-            async move { fs.getattr(ino.into()).await },
+            async move {
+                let path = inode_map.get_path(ino).await?;
+                let (size, file_type) = fs.getattr(&path).await?;
+                Ok(create_attr(ino, size, file_type))
+            },
             |reply: ReplyAttr, attr| reply.attr(&TTL, &attr)
         );
     }
@@ -82,10 +100,14 @@ impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         reply: ReplyData,
     ) {
         let fs = self.fs.clone();
+        let inode_map = self.inode_map.clone();
         reply_async!(
             self,
             reply,
-            async move { fs.read(ino.into(), offset, size).await },
+            async move {
+                let path = inode_map.get_path(ino).await?;
+                fs.read(&path, offset, size).await
+            },
             |reply: ReplyData, content: Box<[u8]>| reply.data(&content)
         );
     }
@@ -99,19 +121,31 @@ impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         mut reply: ReplyDirectory,
     ) {
         let fs = self.fs.clone();
+        let inode_map = self.inode_map.clone();
         reply_async!(
             self,
             reply,
             async {
-                let mut entries = fs.readdir(ino.into(), offset).await?.enumerate();
-                while let Some((index, entry)) = entries.next().await {
-                    let (child_ino, entry) = entry?;
-                    if reply.add(
-                        fuser::INodeNo(child_ino),
-                        offset + index as u64 + 1,
-                        entry.file_type.into(),
-                        entry.name.as_str(),
-                    ) {
+                if offset < 1 && reply.add(ino, 1, FileType::Directory, ".") {
+                    return Ok(());
+                }
+
+                if offset < 2 {
+                    let parent_ino = inode_map.get_parent_ino(ino).await?;
+                    if reply.add(parent_ino, 2, FileType::Directory, "..") {
+                        return Ok(());
+                    }
+                }
+
+                let path = inode_map.get_path(ino).await?;
+                let skip = offset.saturating_sub(2) as usize;
+                let entries = fs.readdir(&path).await?;
+                let mut stream = stream::iter(3..).zip(entries).skip(skip);
+                while let Some((index, entry)) = stream.next().await {
+                    let name = entry.name.as_str();
+                    let file_type = entry.file_type.into();
+                    let child_ino = inode_map.get_ino(ino, name).await?;
+                    if reply.add(child_ino, index, file_type, name) {
                         break;
                     }
                 }
@@ -123,5 +157,31 @@ impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
 
     fn readlink(&self, _req: &Request, _ino: INodeNo, reply: ReplyData) {
         reply.error(Errno::ENOSYS);
+    }
+}
+
+fn create_attr(ino: INodeNo, size: u64, file_type: crate::path_mapper::FileType) -> FileAttr {
+    FileAttr {
+        ino,
+        size,
+        blocks: size.div_ceil(512),
+        atime: UNIX_EPOCH, // TODO: properly set timestamps
+        mtime: UNIX_EPOCH,
+        ctime: UNIX_EPOCH,
+        crtime: UNIX_EPOCH,
+        kind: file_type.into(),
+        perm: match file_type {
+            crate::path_mapper::FileType::Directory => 0o755,
+            _ => 0o644,
+        },
+        nlink: match file_type {
+            crate::path_mapper::FileType::Directory => 2,
+            _ => 1,
+        },
+        uid: 1000,
+        gid: 1000,
+        rdev: 0,
+        flags: 0,
+        blksize: 4096,
     }
 }
