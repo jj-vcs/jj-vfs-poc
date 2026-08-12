@@ -8,9 +8,19 @@ use ustr::Ustr;
 
 use crate::jj_error::JjError;
 
+#[derive(Clone, Copy)]
 pub enum FileType {
     File,
     Directory,
+}
+
+impl From<FileType> for fuser::FileType {
+    fn from(file_type: FileType) -> Self {
+        match file_type {
+            FileType::File => fuser::FileType::RegularFile,
+            FileType::Directory => fuser::FileType::Directory,
+        }
+    }
 }
 
 pub struct DirectoryEntry {

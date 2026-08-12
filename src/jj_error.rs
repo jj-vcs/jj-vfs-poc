@@ -1,3 +1,4 @@
+use fuser::Errno;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -19,4 +20,15 @@ pub enum JjError {
 
     #[error("Underlying jj-lib error: {0}")]
     JjLibBackendError(#[from] jj_lib::backend::BackendError),
+}
+
+impl From<JjError> for Errno {
+    fn from(value: JjError) -> Self {
+        match value {
+            JjError::NotFound => Errno::ENOENT,
+            JjError::NotADirectory => Errno::ENOTDIR,
+            JjError::NotAFile => Errno::EISDIR,
+            _ => Errno::EIO,
+        }
+    }
 }
