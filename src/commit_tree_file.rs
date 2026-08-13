@@ -88,7 +88,10 @@ impl VirtualFile for CommitTreeFile {
                     FileType::File
                 };
 
-                DirectoryEntry::new(component.as_internal_str(), file_type)
+                DirectoryEntry {
+                    name: component.as_internal_str().to_string(),
+                    file_type,
+                }
             })
             .collect(); // TODO: No proper pagination here, since the entire iterator needs to be collected
 

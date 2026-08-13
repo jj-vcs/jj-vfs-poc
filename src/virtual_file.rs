@@ -3,7 +3,6 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use futures::AsyncRead;
 use futures::stream::BoxStream;
-use ustr::Ustr;
 
 use crate::jj_error::JjError;
 
@@ -23,17 +22,8 @@ impl From<FileType> for fuser::FileType {
 }
 
 pub struct DirectoryEntry {
-    pub name: Ustr,
+    pub name: String,
     pub file_type: FileType,
-}
-
-impl DirectoryEntry {
-    pub fn new(name: &str, file_type: FileType) -> Self {
-        Self {
-            name: Ustr::from(name),
-            file_type,
-        }
-    }
 }
 
 pub type DirectoryStream = BoxStream<'static, DirectoryEntry>;

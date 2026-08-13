@@ -99,7 +99,10 @@ mod tests {
                                 MockVirtualFile::File(_) => FileType::File,
                                 MockVirtualFile::Directory(_) => FileType::Directory,
                             };
-                            DirectoryEntry::new(name, file_type)
+                            DirectoryEntry {
+                                name: name.to_string(),
+                                file_type,
+                            }
                         })
                         .collect::<Vec<_>>();
                     let stream: DirectoryStream = Box::pin(stream::iter(children));
