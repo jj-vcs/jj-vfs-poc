@@ -6,10 +6,10 @@ use async_trait::async_trait;
 use jj_lib::backend::CommitId;
 use jj_lib::repo::ReadonlyRepo;
 
+use crate::commit_tree_file::CommitTreeFile;
+use crate::commits_directory::CommitsDirectory;
 use crate::jj_error::JjError;
 use crate::path_mapper::PathMapper;
-use crate::vfs::commit_tree_file::CommitTreeFile;
-use crate::vfs::commits_directory::CommitsDirectory;
 use crate::virtual_file::VirtualFile;
 
 pub struct AllCommitsMapper {
@@ -51,7 +51,7 @@ mod tests {
     use pollster::FutureExt as _;
 
     use super::*;
-    use crate::vfs::test_helpers::setup_test_repo;
+    use crate::test_helpers::setup_test_repo;
 
     #[test]
     fn test_all_commit_trees_mapper_root() {
