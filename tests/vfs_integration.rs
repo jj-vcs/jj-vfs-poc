@@ -10,7 +10,7 @@ use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
 // feature enabled in `[dev-dependencies]`.
 #[path = "../src/test_helpers.rs"]
 mod test_helpers;
-use jjfsd::vfs::PathMappedVFS;
+use jjfsd::vfs::PathMappedVfs;
 use jjfsd::vfs::VirtualFilesystem;
 use jjfsd::virtual_file::FileType;
 use pollster::FutureExt as _;
@@ -22,7 +22,7 @@ fn test_vfs_read_real_repo_files() {
 
     // 2. Initialize the mapper and JjVfsState
     let mapper = AllCommitsPathMapper::new(repo);
-    let fs = PathMappedVFS::new(mapper);
+    let fs = PathMappedVfs::new(mapper);
 
     // 3. Look up the commit directory (the commit hex is the first level of
     //    components in the path mapper)
@@ -85,7 +85,7 @@ fn test_vfs_mount() {
 
     // 2. Initialize the mapper and JjVfsState
     let mapper = AllCommitsPathMapper::new(repo);
-    let fs = PathMappedVFS::new(mapper);
+    let fs = PathMappedVfs::new(mapper);
 
     // 3. Create a temporary mountpoint directory
     let mount_dir = tempfile::tempdir().expect("Failed to create tempdir");
