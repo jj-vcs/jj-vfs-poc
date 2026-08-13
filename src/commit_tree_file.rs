@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use futures::AsyncRead;
@@ -15,6 +16,7 @@ use jj_lib::repo_path::RepoPathBuf;
 use crate::jj_error::JjError;
 use crate::virtual_file::DirectoryEntry;
 use crate::virtual_file::DirectoryStream;
+use crate::virtual_file::FileAttributes;
 use crate::virtual_file::FileType;
 use crate::virtual_file::VirtualFile;
 
@@ -98,17 +100,25 @@ impl VirtualFile for CommitTreeFile {
         Ok(Box::pin(futures::stream::iter(files)))
     }
 
-    async fn size(&self) -> Result<u64, JjError> {
-        if matches!(self.file_type().await?, FileType::Directory) {
-            return Ok(0);
-        }
+    async fn attributes(&self) -> Result<FileAttributes, JjError> {
+        let file_type = self.file_type().await?;
+        let size = match file_type {
+            FileType::File => {
+                let mut reader = self.read().await?;
 
-        let mut reader = self.read().await?;
+                // TODO: we should be able to get the file size without having to read the
+                // entire file (requires changes in jj-lib).
+                futures::io::copy(&mut reader, &mut futures::io::sink()).await?
+            }
+            FileType::Directory => 0,
+        };
 
-        // TODO: we should be able to get the file size without having to read the
-        // entire file (requires changes in jj-lib).
-        let size = futures::io::copy(&mut reader, &mut futures::io::sink()).await?;
-        Ok(size)
+        Ok(FileAttributes {
+            size,
+            file_type,
+            created: UNIX_EPOCH, // TODO: implement proper timestamps
+            modified: UNIX_EPOCH,
+        })
     }
 
     async fn file_type(&self) -> Result<FileType, JjError> {
@@ -183,7 +193,7 @@ mod tests {
             .block_on()
             .unwrap();
 
-        let size = commit_tree.size().block_on().unwrap();
+        let size = commit_tree.attributes().block_on().unwrap().size;
         assert_eq!(size, b"hello content 1".len() as u64);
     }
 

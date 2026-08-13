@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use futures::AsyncRead;
@@ -10,6 +11,13 @@ use crate::jj_error::JjError;
 pub enum FileType {
     File,
     Directory,
+}
+
+pub struct FileAttributes {
+    pub size: u64,
+    pub file_type: FileType,
+    pub created: SystemTime,
+    pub modified: SystemTime,
 }
 
 pub struct DirectoryEntry {
@@ -31,6 +39,6 @@ pub type DirectoryStream = BoxStream<'static, DirectoryEntry>;
 pub trait VirtualFile: Send + Sync {
     async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError>;
     async fn list(&self) -> Result<DirectoryStream, JjError>;
-    async fn size(&self) -> Result<u64, JjError>;
+    async fn attributes(&self) -> Result<FileAttributes, JjError>;
     async fn file_type(&self) -> Result<FileType, JjError>;
 }
