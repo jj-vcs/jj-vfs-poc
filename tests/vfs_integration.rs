@@ -30,7 +30,7 @@ fn test_vfs_read_real_repo_files() {
 
     // In JjVfsState, looking up a child of root (parent = 1) is done by name:
     let commit_dir_attr = fs
-        .getattr(Path::new(&commit_hex))
+        .get_attributes(Path::new(&commit_hex))
         .block_on()
         .expect("Failed to lookup commit directory");
 
@@ -39,7 +39,7 @@ fn test_vfs_read_real_repo_files() {
 
     // 4. Look up "file1.txt" inside the commit directory
     let file1_attr = fs
-        .getattr(Path::new(&format!("{}/file1.txt", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/file1.txt", commit_hex)))
         .block_on()
         .expect("Failed to lookup file1.txt");
     assert!(matches!(file1_attr.file_type, FileType::File));
@@ -54,14 +54,14 @@ fn test_vfs_read_real_repo_files() {
 
     // 6. Look up "dir" inside the commit directory
     let dir_attr = fs
-        .getattr(Path::new(&format!("{}/dir", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/dir", commit_hex)))
         .block_on()
         .expect("Failed to lookup dir");
     assert!(matches!(dir_attr.file_type, FileType::Directory));
 
     // 7. Look up "file2.txt" inside "dir"
     let file2_attr = fs
-        .getattr(Path::new(&format!("{}/dir/file2.txt", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/dir/file2.txt", commit_hex)))
         .block_on()
         .expect("Failed to lookup file2.txt");
     assert!(matches!(file2_attr.file_type, FileType::File));
@@ -76,7 +76,7 @@ fn test_vfs_read_real_repo_files() {
 
     // 9. Look up "symlink" inside the commit directory
     let symlink_attr = fs
-        .getattr(Path::new(&format!("{}/symlink", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/symlink", commit_hex)))
         .block_on()
         .expect("Failed to lookup symlink");
     assert!(matches!(symlink_attr.file_type, FileType::Symlink));
