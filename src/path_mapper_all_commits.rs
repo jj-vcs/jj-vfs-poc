@@ -12,18 +12,18 @@ use crate::jj_error::JjError;
 use crate::path_mapper::PathMapper;
 use crate::virtual_file::VirtualFile;
 
-pub struct AllCommitsMapper {
+pub struct AllCommitsPathMapper {
     repo: Arc<ReadonlyRepo>,
 }
 
-impl AllCommitsMapper {
+impl AllCommitsPathMapper {
     pub fn new(repo: Arc<ReadonlyRepo>) -> Self {
         Self { repo }
     }
 }
 
 #[async_trait]
-impl PathMapper for AllCommitsMapper {
+impl PathMapper for AllCommitsPathMapper {
     async fn get_entry(&self, path: &Path) -> Result<Box<dyn VirtualFile>, JjError> {
         if path == Path::new("") {
             Ok(Box::new(CommitsDirectory::new(self.repo.clone())))
@@ -56,7 +56,7 @@ mod tests {
     #[test]
     fn test_all_commit_trees_mapper_root() {
         let (_temp_dir, repo, _commit) = setup_test_repo();
-        let mapper = AllCommitsMapper { repo };
+        let mapper = AllCommitsPathMapper { repo };
 
         let entry = mapper.get_entry(Path::new("")).block_on().unwrap();
         assert!(entry.list().block_on().is_ok());
@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn test_all_commit_trees_mapper_commit_root() {
         let (_temp_dir, repo, commit_id) = setup_test_repo();
-        let mapper = AllCommitsMapper { repo };
+        let mapper = AllCommitsPathMapper { repo };
 
         let commit_hex = commit_id.hex();
         let path = Path::new(&commit_hex);
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn test_all_commit_trees_mapper_commit_subpath() {
         let (_temp_dir, repo, commit_id) = setup_test_repo();
-        let mapper = AllCommitsMapper { repo };
+        let mapper = AllCommitsPathMapper { repo };
 
         let commit_hex = commit_id.hex();
         let mut path = PathBuf::from(&commit_hex);
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn test_all_commit_trees_mapper_invalid_commit_id() {
         let (_temp_dir, repo, _commit) = setup_test_repo();
-        let mapper = AllCommitsMapper { repo };
+        let mapper = AllCommitsPathMapper { repo };
 
         let path = Path::new("invalid_commit_hex");
         let err = match mapper.get_entry(path).block_on() {
