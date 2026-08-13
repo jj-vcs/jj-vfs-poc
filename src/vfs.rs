@@ -13,17 +13,17 @@ use crate::virtual_file::FileType;
 /// This trait acts as the intermediate layer between the FUSE filesystem layer
 /// and the path mapper.
 #[async_trait]
-pub trait JjFilesystem {
+pub trait VirtualFilesystem {
     async fn getattr(&self, path: &Path) -> Result<(u64, FileType), JjError>; // TODO: create proper attributes struct
     async fn read(&self, path: &Path, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
     async fn readdir(&self, path: &Path) -> Result<DirectoryStream, JjError>;
 }
 
-pub struct JjVfsState<P: PathMapper> {
+pub struct PathMappedVFS<P: PathMapper> {
     path_mapper: Arc<P>,
 }
 
-impl<P: PathMapper> JjVfsState<P> {
+impl<P: PathMapper> PathMappedVFS<P> {
     pub fn new(path_mapper: P) -> Self {
         Self {
             path_mapper: Arc::new(path_mapper),
@@ -32,7 +32,7 @@ impl<P: PathMapper> JjVfsState<P> {
 }
 
 #[async_trait]
-impl<P: PathMapper> JjFilesystem for JjVfsState<P> {
+impl<P: PathMapper> VirtualFilesystem for PathMappedVFS<P> {
     async fn getattr(&self, path: &Path) -> Result<(u64, FileType), JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         let size = virtual_file.size().await?;
@@ -147,7 +147,7 @@ mod tests {
         }
     }
 
-    fn setup_test_vfs() -> JjVfsState<MockPathMapper> {
+    fn setup_test_vfs() -> PathMappedVFS<MockPathMapper> {
         let mut root_children = HashMap::new();
         root_children.insert(
             "file.txt".to_string(),
@@ -167,7 +167,7 @@ mod tests {
         let root = Arc::new(MockVirtualFile::Directory(root_children));
         let mapper = MockPathMapper { root };
 
-        JjVfsState::new(mapper)
+        PathMappedVFS::new(mapper)
     }
 
     #[test]

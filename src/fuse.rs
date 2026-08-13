@@ -9,7 +9,7 @@ use futures::stream;
 
 use crate::inode_map::InodeMap;
 use crate::jj_error::JjError;
-use crate::jj_filesystem::JjFilesystem;
+use crate::vfs::VirtualFilesystem;
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -30,13 +30,13 @@ macro_rules! reply_async {
     };
 }
 
-pub struct JjFuse<FS: JjFilesystem> {
+pub struct JjFuse<FS: VirtualFilesystem> {
     fs: Arc<FS>,
     inode_map: Arc<InodeMap>,
     rt_handle: tokio::runtime::Handle,
 }
 
-impl<FS: JjFilesystem> JjFuse<FS> {
+impl<FS: VirtualFilesystem> JjFuse<FS> {
     pub fn new(fs: Arc<FS>, rt_handle: tokio::runtime::Handle) -> Self {
         Self {
             fs,
@@ -46,7 +46,7 @@ impl<FS: JjFilesystem> JjFuse<FS> {
     }
 }
 
-impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
+impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
     fn init(&mut self, _req: &Request, config: &mut KernelConfig) -> std::io::Result<()> {
         let _ = config.add_capabilities(
             fuser::InitFlags::FUSE_PARALLEL_DIROPS | fuser::InitFlags::FUSE_ASYNC_READ,
