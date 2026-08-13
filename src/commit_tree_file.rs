@@ -26,6 +26,7 @@ pub struct CommitTreeFile {
 }
 
 impl CommitTreeFile {
+    #[tracing::instrument(skip(repo))]
     pub async fn new(
         repo: &ReadonlyRepo,
         commit_id: CommitId,
@@ -38,6 +39,7 @@ impl CommitTreeFile {
 
 #[async_trait]
 impl VirtualFile for CommitTreeFile {
+    #[tracing::instrument(skip(self))]
     async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
@@ -55,6 +57,7 @@ impl VirtualFile for CommitTreeFile {
         Ok(reader)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn list(&self) -> Result<DirectoryStream, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
@@ -101,6 +104,7 @@ impl VirtualFile for CommitTreeFile {
         Ok(Box::pin(futures::stream::iter(files)))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn read_link(&self) -> Result<PathBuf, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
@@ -121,6 +125,7 @@ impl VirtualFile for CommitTreeFile {
         Ok(PathBuf::from(target))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn attributes(&self) -> Result<FileAttributes, JjError> {
         let file_type = self.file_type().await?;
         let size = match file_type {
@@ -146,6 +151,7 @@ impl VirtualFile for CommitTreeFile {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     async fn file_type(&self) -> Result<FileType, JjError> {
         let repo_path =
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;

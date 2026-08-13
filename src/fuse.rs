@@ -49,6 +49,7 @@ impl<FS: VirtualFilesystem> JjFuse<FS> {
 }
 
 impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
+    #[tracing::instrument(level = "debug", skip_all)]
     fn init(&mut self, _req: &Request, config: &mut KernelConfig) -> std::io::Result<()> {
         let _ = config.add_capabilities(
             fuser::InitFlags::FUSE_PARALLEL_DIROPS | fuser::InitFlags::FUSE_ASYNC_READ,
@@ -56,6 +57,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let fs = self.fs.clone();
         let inode_map = self.inode_map.clone();
@@ -73,6 +75,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         );
     }
 
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         let fs = self.fs.clone();
         let inode_map = self.inode_map.clone();
@@ -88,6 +91,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         );
     }
 
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn read(
         &self,
         _req: &Request,
@@ -112,6 +116,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         );
     }
 
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn readdir(
         &self,
         _req: &Request,
@@ -155,6 +160,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         );
     }
 
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
         let inode_map = self.inode_map.clone();
         let fs = self.fs.clone();

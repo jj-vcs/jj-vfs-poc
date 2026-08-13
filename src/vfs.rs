@@ -35,11 +35,13 @@ impl<P: PathMapper> PathMappedVfs<P> {
 
 #[async_trait]
 impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
+    #[tracing::instrument(skip(self))]
     async fn getattr(&self, path: &Path) -> Result<FileAttributes, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         virtual_file.attributes().await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn read(&self, path: &Path, offset: u64, size: u32) -> Result<Box<[u8]>, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         let reader = virtual_file.read().await?;
@@ -51,11 +53,13 @@ impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
         Ok(content.into())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn readdir(&self, path: &Path) -> Result<DirectoryStream, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         virtual_file.list().await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn read_link(&self, path: &Path) -> Result<PathBuf, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         virtual_file.read_link().await
