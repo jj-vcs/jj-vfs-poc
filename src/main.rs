@@ -9,6 +9,14 @@ use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
 use jjfsd::vfs::PathMappedVFS;
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
         eprintln!("Usage: {} <MOUNTPOINT> <WORKSPACE_ROOT>", args[0]);
