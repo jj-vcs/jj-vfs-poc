@@ -16,15 +16,33 @@ use crate::virtual_file::FileAttributes;
 const TTL: Duration = Duration::from_secs(1);
 
 macro_rules! reply_async {
-    ($self:ident, $reply:ident, $async_body:expr, $success_fn:expr) => {
+    (
+        $self:ident,
+        $reply:ident,
+        $ino:expr,
+        $path:ident => $async_body:expr,
+        $value:pat => $success_body:expr
+    ) => {
+        let inode_map = $self.inode_map.clone();
         let rt_handle = $self.rt_handle.clone();
+        let ino = $ino;
         rt_handle.spawn(async move {
-            let res: Result<_, JjError> = $async_body.await;
-            match res {
-                Ok(value) => {
-                    $success_fn($reply, value);
+            match inode_map.get_path(ino) {
+                Ok(mut path_buf) => {
+                    let $path = &mut path_buf;
+                    let res: Result<_, JjError> = $async_body.await;
+                    match res {
+                        Ok($value) => {
+                            $success_body
+                        }
+                        Err(err) => {
+                            tracing::debug!(path = %format_args!("./{}", path_buf.display()), error = %err, "FUSE operation failed");
+                            $reply.error(err.into());
+                        }
+                    }
                 }
                 Err(err) => {
+                    tracing::error!(ino = %ino, error = %err, "Failed to resolve path for inode");
                     $reply.error(err.into());
                 }
             }
@@ -65,29 +83,27 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         reply_async!(
             self,
             reply,
-            async move {
-                let ino = inode_map.get_ino(parent, name.to_str().ok_or(JjError::InvalidPath)?)?;
-                let path = inode_map.get_path(ino)?;
-                let attr = fs.get_attributes(&path).await?;
-                Ok(attr.to_fuse(ino))
+            parent,
+            parent_path => async move {
+                let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
+                let child_ino = inode_map.get_ino(parent, name_str)?;
+                parent_path.push(name_str);
+                let attr = fs.get_attributes(parent_path).await?;
+                Ok(attr.to_fuse(child_ino))
             },
-            |reply: ReplyEntry, attr| reply.entry(&TTL, &attr, fuser::Generation(0))
+            attr => reply.entry(&TTL, &attr, fuser::Generation(0))
         );
     }
 
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         let fs = self.fs.clone();
-        let inode_map = self.inode_map.clone();
         reply_async!(
             self,
             reply,
-            async move {
-                let path = inode_map.get_path(ino)?;
-                let attr = fs.get_attributes(&path).await?;
-                Ok(attr.to_fuse(ino))
-            },
-            |reply: ReplyAttr, attr| reply.attr(&TTL, &attr)
+            ino,
+            path => async { Ok(fs.get_attributes(path).await?.to_fuse(ino)) },
+            attr => reply.attr(&TTL, &attr)
         );
     }
 
@@ -104,15 +120,12 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         reply: ReplyData,
     ) {
         let fs = self.fs.clone();
-        let inode_map = self.inode_map.clone();
         reply_async!(
             self,
             reply,
-            async move {
-                let path = inode_map.get_path(ino)?;
-                fs.read(&path, offset, size).await
-            },
-            |reply: ReplyData, content: Box<[u8]>| reply.data(&content)
+            ino,
+            path => async { fs.read(path, offset, size).await },
+            content => reply.data(&content)
         );
     }
 
@@ -130,7 +143,8 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         reply_async!(
             self,
             reply,
-            async {
+            ino,
+            path => async {
                 if offset < 1 && reply.add(ino, 1, FileType::Directory, ".") {
                     return Ok(());
                 }
@@ -142,9 +156,8 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
                     }
                 }
 
-                let path = inode_map.get_path(ino)?;
                 let skip = offset.saturating_sub(2) as usize;
-                let entries = fs.read_directory(&path).await?;
+                let entries = fs.read_directory(path).await?;
                 let mut stream = stream::iter(3..).zip(entries).skip(skip);
                 while let Some((index, entry)) = stream.next().await {
                     let name = entry.name.as_str();
@@ -156,24 +169,23 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
                 }
                 Ok(())
             },
-            |reply: ReplyDirectory, ()| reply.ok()
+            () => reply.ok()
         );
     }
 
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
-        let inode_map = self.inode_map.clone();
         let fs = self.fs.clone();
         reply_async!(
             self,
             reply,
-            async {
-                let path = inode_map.get_path(ino)?;
-                let target = fs.read_link(&path).await?;
+            ino,
+            path => async move {
+                let target = fs.read_link(path).await?;
                 let bytes = target.as_os_str().as_bytes().to_vec();
                 Ok(bytes)
             },
-            |reply: ReplyData, target: Vec<u8>| reply.data(&target)
+            target => reply.data(&target)
         );
     }
 }
