@@ -43,7 +43,10 @@ impl VirtualFile for CommitsDirectory {
             revset
                 .stream()
                 .filter_map(|commit_id_res| futures::future::ready(commit_id_res.ok()))
-                .map(|commit_id| DirectoryEntry::new(&commit_id.hex(), FileType::Directory))
+                .map(|commit_id| DirectoryEntry {
+                    name: commit_id.hex(),
+                    file_type: FileType::Directory,
+                })
                 .collect()
                 .await
         }); // TODO: currently there is no proper pagination implemented here
