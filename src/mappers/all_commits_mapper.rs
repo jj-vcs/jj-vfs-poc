@@ -8,9 +8,9 @@ use jj_lib::repo::ReadonlyRepo;
 
 use crate::jj_error::JjError;
 use crate::path_mapper::PathMapper;
-use crate::path_mapper::VirtualFile;
 use crate::vfs::commit_tree_file::CommitTreeFile;
 use crate::vfs::commits_directory::CommitsDirectory;
+use crate::virtual_file::VirtualFile;
 
 pub struct AllCommitsMapper {
     repo: Arc<ReadonlyRepo>,

@@ -160,7 +160,7 @@ impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
     }
 }
 
-fn create_attr(ino: INodeNo, size: u64, file_type: crate::path_mapper::FileType) -> FileAttr {
+fn create_attr(ino: INodeNo, size: u64, file_type: crate::virtual_file::FileType) -> FileAttr {
     FileAttr {
         ino,
         size,
@@ -171,11 +171,11 @@ fn create_attr(ino: INodeNo, size: u64, file_type: crate::path_mapper::FileType)
         crtime: UNIX_EPOCH,
         kind: file_type.into(),
         perm: match file_type {
-            crate::path_mapper::FileType::Directory => 0o755,
+            crate::virtual_file::FileType::Directory => 0o755,
             _ => 0o644,
         },
         nlink: match file_type {
-            crate::path_mapper::FileType::Directory => 2,
+            crate::virtual_file::FileType::Directory => 2,
             _ => 1,
         },
         uid: 1000,

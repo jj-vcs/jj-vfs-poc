@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use futures::io::AsyncReadExt as _;
 
 use crate::jj_error::JjError;
-use crate::path_mapper::DirectoryStream;
-use crate::path_mapper::FileType;
 use crate::path_mapper::PathMapper;
+use crate::virtual_file::DirectoryStream;
+use crate::virtual_file::FileType;
 
 /// Middle-layer filesystem abstraction representing inode-based VFS operations.
 /// This trait acts as the intermediate layer between the FUSE filesystem layer
@@ -71,9 +71,9 @@ mod tests {
     use pollster::FutureExt;
 
     use super::*;
-    use crate::path_mapper::DirectoryEntry;
-    use crate::path_mapper::DirectoryStream;
-    use crate::path_mapper::VirtualFile;
+    use crate::virtual_file::DirectoryEntry;
+    use crate::virtual_file::DirectoryStream;
+    use crate::virtual_file::VirtualFile;
 
     enum MockVirtualFile {
         File(Vec<u8>),

@@ -13,10 +13,10 @@ use jj_lib::repo::Repo;
 use jj_lib::repo_path::RepoPathBuf;
 
 use crate::jj_error::JjError;
-use crate::path_mapper::DirectoryEntry;
-use crate::path_mapper::DirectoryStream;
-use crate::path_mapper::FileType;
-use crate::path_mapper::VirtualFile;
+use crate::virtual_file::DirectoryEntry;
+use crate::virtual_file::DirectoryStream;
+use crate::virtual_file::FileType;
+use crate::virtual_file::VirtualFile;
 
 pub struct CommitTreeFile {
     commit: Commit,
@@ -136,8 +136,8 @@ mod tests {
     use pollster::FutureExt as _;
 
     use super::*;
-    use crate::path_mapper::VirtualFile;
     use crate::vfs::test_helpers::setup_test_repo;
+    use crate::virtual_file::VirtualFile;
 
     #[test]
     fn test_list_directory_root() {

@@ -5,3 +5,4 @@ pub mod jj_filesystem;
 pub mod mappers;
 pub mod path_mapper;
 pub mod vfs;
+pub mod virtual_file;
