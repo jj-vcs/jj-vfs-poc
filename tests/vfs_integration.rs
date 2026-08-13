@@ -35,15 +35,15 @@ fn test_vfs_read_real_repo_files() {
         .expect("Failed to lookup commit directory");
 
     // Verify it is indeed a directory (kind = Directory)
-    assert!(matches!(commit_dir_attr.1, FileType::Directory));
+    assert!(matches!(commit_dir_attr.file_type, FileType::Directory));
 
     // 4. Look up "file1.txt" inside the commit directory
     let file1_attr = fs
         .getattr(Path::new(&format!("{}/file1.txt", commit_hex)))
         .block_on()
         .expect("Failed to lookup file1.txt");
-    assert!(matches!(file1_attr.1, FileType::File));
-    assert_eq!(file1_attr.0, 15); // "hello content 1" is 15 bytes
+    assert!(matches!(file1_attr.file_type, FileType::File));
+    assert_eq!(file1_attr.size, 15); // "hello content 1" is 15 bytes
 
     // 5. Read the content of "file1.txt"
     let content = fs
@@ -57,15 +57,15 @@ fn test_vfs_read_real_repo_files() {
         .getattr(Path::new(&format!("{}/dir", commit_hex)))
         .block_on()
         .expect("Failed to lookup dir");
-    assert!(matches!(dir_attr.1, FileType::Directory));
+    assert!(matches!(dir_attr.file_type, FileType::Directory));
 
     // 7. Look up "file2.txt" inside "dir"
     let file2_attr = fs
         .getattr(Path::new(&format!("{}/dir/file2.txt", commit_hex)))
         .block_on()
         .expect("Failed to lookup file2.txt");
-    assert!(matches!(file2_attr.1, FileType::File));
-    assert_eq!(file2_attr.0, 15); // "hello content 2" is 15 bytes
+    assert!(matches!(file2_attr.file_type, FileType::File));
+    assert_eq!(file2_attr.size, 15); // "hello content 2" is 15 bytes
 
     // 8. Read the content of "file2.txt"
     let content2 = fs

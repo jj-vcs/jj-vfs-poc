@@ -7,14 +7,14 @@ use futures::io::AsyncReadExt as _;
 use crate::jj_error::JjError;
 use crate::path_mapper::PathMapper;
 use crate::virtual_file::DirectoryStream;
-use crate::virtual_file::FileType;
+use crate::virtual_file::FileAttributes;
 
 /// Middle-layer filesystem abstraction representing inode-based VFS operations.
 /// This trait acts as the intermediate layer between the FUSE filesystem layer
 /// and the path mapper.
 #[async_trait]
 pub trait VirtualFilesystem {
-    async fn getattr(&self, path: &Path) -> Result<(u64, FileType), JjError>; // TODO: create proper attributes struct
+    async fn getattr(&self, path: &Path) -> Result<FileAttributes, JjError>; // TODO: create proper attributes struct
     async fn read(&self, path: &Path, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
     async fn readdir(&self, path: &Path) -> Result<DirectoryStream, JjError>;
 }
@@ -33,11 +33,9 @@ impl<P: PathMapper> PathMappedVFS<P> {
 
 #[async_trait]
 impl<P: PathMapper> VirtualFilesystem for PathMappedVFS<P> {
-    async fn getattr(&self, path: &Path) -> Result<(u64, FileType), JjError> {
+    async fn getattr(&self, path: &Path) -> Result<FileAttributes, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
-        let size = virtual_file.size().await?;
-        let file_type = virtual_file.file_type().await?;
-        Ok((size, file_type))
+        virtual_file.attributes().await
     }
 
     async fn read(&self, path: &Path, offset: u64, size: u32) -> Result<Box<[u8]>, JjError> {
@@ -63,6 +61,7 @@ mod tests {
     use std::path::Path;
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::time::SystemTime;
 
     use async_trait::async_trait;
     use futures::StreamExt as _;
@@ -73,6 +72,7 @@ mod tests {
     use super::*;
     use crate::virtual_file::DirectoryEntry;
     use crate::virtual_file::DirectoryStream;
+    use crate::virtual_file::FileType;
     use crate::virtual_file::VirtualFile;
 
     enum MockVirtualFile {
@@ -112,10 +112,20 @@ mod tests {
             }
         }
 
-        async fn size(&self) -> Result<u64, JjError> {
+        async fn attributes(&self) -> Result<FileAttributes, JjError> {
             match &**self {
-                MockVirtualFile::File(content) => Ok(content.len() as u64),
-                MockVirtualFile::Directory(_) => Ok(0),
+                MockVirtualFile::File(content) => Ok(FileAttributes {
+                    size: content.len() as u64,
+                    file_type: FileType::File,
+                    created: SystemTime::now(),
+                    modified: SystemTime::now(),
+                }),
+                MockVirtualFile::Directory(_) => Ok(FileAttributes {
+                    size: 0,
+                    file_type: FileType::Directory,
+                    created: SystemTime::now(),
+                    modified: SystemTime::now(),
+                }),
             }
         }
 

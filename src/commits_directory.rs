@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use futures::AsyncRead;
@@ -10,6 +11,7 @@ use jj_lib::repo::ReadonlyRepo;
 use crate::jj_error::JjError;
 use crate::virtual_file::DirectoryEntry;
 use crate::virtual_file::DirectoryStream;
+use crate::virtual_file::FileAttributes;
 use crate::virtual_file::FileType;
 use crate::virtual_file::VirtualFile;
 
@@ -53,8 +55,13 @@ impl VirtualFile for CommitsDirectory {
         Ok(Box::pin(futures::stream::iter(commits)))
     }
 
-    async fn size(&self) -> Result<u64, JjError> {
-        Ok(0)
+    async fn attributes(&self) -> Result<FileAttributes, JjError> {
+        Ok(FileAttributes {
+            size: 0,
+            file_type: FileType::Directory,
+            created: UNIX_EPOCH, // TODO: implement proper timestamps
+            modified: UNIX_EPOCH,
+        })
     }
 
     async fn file_type(&self) -> Result<FileType, JjError> {

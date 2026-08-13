@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::UNIX_EPOCH;
+use std::time::SystemTime;
 
 use fuser::*;
 use futures::StreamExt as _;
@@ -10,6 +10,7 @@ use futures::stream;
 use crate::inode_map::InodeMap;
 use crate::jj_error::JjError;
 use crate::vfs::VirtualFilesystem;
+use crate::virtual_file::FileAttributes;
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -66,8 +67,8 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
                     .get_ino(parent, name.to_str().ok_or(JjError::InvalidPath)?)
                     .await?;
                 let path = inode_map.get_path(ino).await?;
-                let (size, file_type) = fs.getattr(&path).await?;
-                Ok(create_attr(ino, size, file_type))
+                let attr = fs.getattr(&path).await?;
+                Ok(attr.to_fuse(ino))
             },
             |reply: ReplyEntry, attr| reply.entry(&TTL, &attr, fuser::Generation(0))
         );
@@ -81,8 +82,8 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
             reply,
             async move {
                 let path = inode_map.get_path(ino).await?;
-                let (size, file_type) = fs.getattr(&path).await?;
-                Ok(create_attr(ino, size, file_type))
+                let attr = fs.getattr(&path).await?;
+                Ok(attr.to_fuse(ino))
             },
             |reply: ReplyAttr, attr| reply.attr(&TTL, &attr)
         );
@@ -160,6 +161,34 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
     }
 }
 
+impl FileAttributes {
+    pub fn to_fuse(&self, ino: INodeNo) -> FileAttr {
+        FileAttr {
+            ino,
+            size: self.size,
+            blocks: self.size.div_ceil(512),
+            atime: SystemTime::now(), // TODO: properly set timestamps
+            mtime: self.modified,
+            ctime: self.modified,
+            crtime: self.created,
+            kind: self.file_type.into(),
+            perm: match self.file_type {
+                crate::virtual_file::FileType::Directory => 0o755,
+                _ => 0o644,
+            },
+            nlink: match self.file_type {
+                crate::virtual_file::FileType::Directory => 2,
+                _ => 1,
+            },
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            flags: 0,
+            blksize: 4096,
+        }
+    }
+}
+
 impl From<crate::virtual_file::FileType> for FileType {
     fn from(file_type: crate::virtual_file::FileType) -> Self {
         match file_type {
@@ -177,31 +206,5 @@ impl From<JjError> for Errno {
             JjError::NotAFile => Errno::EISDIR,
             _ => Errno::EIO,
         }
-    }
-}
-
-fn create_attr(ino: INodeNo, size: u64, file_type: crate::virtual_file::FileType) -> FileAttr {
-    FileAttr {
-        ino,
-        size,
-        blocks: size.div_ceil(512),
-        atime: UNIX_EPOCH, // TODO: properly set timestamps
-        mtime: UNIX_EPOCH,
-        ctime: UNIX_EPOCH,
-        crtime: UNIX_EPOCH,
-        kind: file_type.into(),
-        perm: match file_type {
-            crate::virtual_file::FileType::Directory => 0o755,
-            _ => 0o644,
-        },
-        nlink: match file_type {
-            crate::virtual_file::FileType::Directory => 2,
-            _ => 1,
-        },
-        uid: 1000,
-        gid: 1000,
-        rdev: 0,
-        flags: 0,
-        blksize: 4096,
     }
 }
