@@ -1,10 +1,15 @@
-mod test_helpers;
-
 use std::path::Path;
 use std::sync::Arc;
 
 use jj_lib::object_id::ObjectId as _;
 use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
+// TODO: For simplicity in this PoC, we compile test_helpers directly using a
+// path attribute. A cleaner, long-term solution would be to define a
+// `test-helpers` Cargo feature in the library crate, make `tempfile` and
+// `pollster` optional dependencies, and import `jjfsd` with the `test-helpers`
+// feature enabled in `[dev-dependencies]`.
+#[path = "../src/test_helpers.rs"]
+mod test_helpers;
 use jjfsd::vfs::PathMappedVFS;
 use jjfsd::vfs::VirtualFilesystem;
 use jjfsd::virtual_file::FileType;
