@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,6 +18,7 @@ pub trait VirtualFilesystem {
     async fn getattr(&self, path: &Path) -> Result<FileAttributes, JjError>; // TODO: create proper attributes struct
     async fn read(&self, path: &Path, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
     async fn readdir(&self, path: &Path) -> Result<DirectoryStream, JjError>;
+    async fn read_link(&self, path: &Path) -> Result<PathBuf, JjError>;
 }
 
 pub struct PathMappedVFS<P: PathMapper> {
@@ -53,6 +55,11 @@ impl<P: PathMapper> VirtualFilesystem for PathMappedVFS<P> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         virtual_file.list().await
     }
+
+    async fn read_link(&self, path: &Path) -> Result<PathBuf, JjError> {
+        let virtual_file = self.path_mapper.get_entry(path).await?;
+        virtual_file.read_link().await
+    }
 }
 
 #[cfg(test)]
@@ -78,6 +85,7 @@ mod tests {
     enum MockVirtualFile {
         File(Vec<u8>),
         Directory(HashMap<String, Arc<MockVirtualFile>>),
+        Symlink(PathBuf),
     }
 
     #[async_trait]
@@ -86,6 +94,7 @@ mod tests {
             match &**self {
                 MockVirtualFile::File(content) => Ok(Box::pin(Cursor::new(content.clone()))),
                 MockVirtualFile::Directory(_) => Err(JjError::NotAFile),
+                MockVirtualFile::Symlink(_) => Err(JjError::NotAFile),
             }
         }
 
@@ -98,6 +107,7 @@ mod tests {
                             let file_type = match &**file {
                                 MockVirtualFile::File(_) => FileType::File,
                                 MockVirtualFile::Directory(_) => FileType::Directory,
+                                MockVirtualFile::Symlink(_) => FileType::Symlink,
                             };
                             DirectoryEntry {
                                 name: name.to_string(),
@@ -108,7 +118,16 @@ mod tests {
                     let stream: DirectoryStream = Box::pin(stream::iter(children));
                     Ok(stream)
                 }
-                MockVirtualFile::File(_) => Err(JjError::NotADirectory),
+                MockVirtualFile::File(_) | MockVirtualFile::Symlink(_) => {
+                    Err(JjError::NotADirectory)
+                }
+            }
+        }
+
+        async fn read_link(&self) -> Result<PathBuf, JjError> {
+            match &**self {
+                MockVirtualFile::Symlink(target) => Ok(target.clone()),
+                _ => Err(JjError::NotASymlink),
             }
         }
 
@@ -126,6 +145,12 @@ mod tests {
                     created: SystemTime::now(),
                     modified: SystemTime::now(),
                 }),
+                MockVirtualFile::Symlink(target) => Ok(FileAttributes {
+                    size: target.to_string_lossy().len() as u64,
+                    file_type: FileType::Symlink,
+                    created: SystemTime::now(),
+                    modified: SystemTime::now(),
+                }),
             }
         }
 
@@ -133,6 +158,7 @@ mod tests {
             match &**self {
                 MockVirtualFile::File(_) => Ok(FileType::File),
                 MockVirtualFile::Directory(_) => Ok(FileType::Directory),
+                MockVirtualFile::Symlink(_) => Ok(FileType::Symlink),
             }
         }
     }
@@ -162,6 +188,10 @@ mod tests {
         root_children.insert(
             "file.txt".to_string(),
             Arc::new(MockVirtualFile::File(b"hello world".to_vec())),
+        );
+        root_children.insert(
+            "symlink.txt".to_string(),
+            Arc::new(MockVirtualFile::Symlink(PathBuf::from("file.txt"))),
         );
 
         let mut dir_children = HashMap::new();
@@ -226,5 +256,19 @@ mod tests {
         let fs = setup_test_vfs();
         let result = fs.readdir(Path::new("does_not_exist")).block_on();
         assert!(matches!(result, Err(JjError::NotFound)));
+    }
+
+    #[test]
+    fn test_read_link() {
+        let fs = setup_test_vfs();
+        let target = fs.read_link(Path::new("symlink.txt")).block_on().unwrap();
+        assert_eq!(target, PathBuf::from("file.txt"));
+    }
+
+    #[test]
+    fn test_read_link_not_a_symlink() {
+        let fs = setup_test_vfs();
+        let result = fs.read_link(Path::new("file.txt")).block_on();
+        assert!(matches!(result, Err(JjError::NotASymlink)));
     }
 }

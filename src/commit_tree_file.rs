@@ -47,8 +47,8 @@ impl VirtualFile for CommitTreeFile {
         let file_id = match resolved_val {
             Some(TreeValue::File { id, .. }) => id,
             None => return Err(JjError::NotFound),
-            _ => return Err(JjError::NotAFile), /* TODO: do research on how to handle symlinks
-                                                 * and git submodules */
+            _ => return Err(JjError::NotAFile), /* TODO: do research on how to handle git
+                                                 * submodules */
         };
 
         let reader = self.commit.store().read_file(&repo_path, file_id).await?;
@@ -84,6 +84,7 @@ impl VirtualFile for CommitTreeFile {
                     match maybe_val {
                         Some(TreeValue::Tree(_)) => FileType::Directory,
                         Some(TreeValue::File { .. }) => FileType::File,
+                        Some(TreeValue::Symlink(_)) => FileType::Symlink,
                         _ => FileType::File, // TODO: Handle all file types
                     }
                 } else {
@@ -100,6 +101,26 @@ impl VirtualFile for CommitTreeFile {
         Ok(Box::pin(futures::stream::iter(files)))
     }
 
+    async fn read_link(&self) -> Result<PathBuf, JjError> {
+        let repo_path =
+            RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
+        let merged_val = self.commit.tree().path_value(&repo_path).await?;
+
+        let resolved_val = merged_val.as_resolved().ok_or(JjError::NotASymlink)?;
+        let symlink_id = match resolved_val {
+            Some(TreeValue::Symlink(id)) => id,
+            None => return Err(JjError::NotFound),
+            _ => return Err(JjError::NotASymlink),
+        };
+
+        let target = self
+            .commit
+            .store()
+            .read_symlink(&repo_path, symlink_id)
+            .await?;
+        Ok(PathBuf::from(target))
+    }
+
     async fn attributes(&self) -> Result<FileAttributes, JjError> {
         let file_type = self.file_type().await?;
         let size = match file_type {
@@ -111,6 +132,10 @@ impl VirtualFile for CommitTreeFile {
                 futures::io::copy(&mut reader, &mut futures::io::sink()).await?
             }
             FileType::Directory => 0,
+            FileType::Symlink => {
+                let target = self.read_link().await?;
+                target.as_os_str().len() as u64
+            }
         };
 
         Ok(FileAttributes {
@@ -134,6 +159,7 @@ impl VirtualFile for CommitTreeFile {
         let file_type = match resolved_val {
             Some(TreeValue::Tree(_)) => FileType::Directory,
             Some(TreeValue::File { .. }) => FileType::File,
+            Some(TreeValue::Symlink(_)) => FileType::Symlink,
             _ => FileType::File, // TODO: Handle all file types
         };
         Ok(file_type)
@@ -168,7 +194,7 @@ mod tests {
         assert_eq!(root_files[1].name, "file1.txt");
         assert!(matches!(root_files[1].file_type, FileType::File));
         assert_eq!(root_files[2].name, "symlink");
-        assert!(matches!(root_files[2].file_type, FileType::File));
+        assert!(matches!(root_files[2].file_type, FileType::Symlink));
     }
 
     #[test]
@@ -310,10 +336,28 @@ mod tests {
         assert!(matches!(type_dir, FileType::Directory));
 
         let commit_tree_file =
-            CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("file1.txt"))
+            CommitTreeFile::new(repo.as_ref(), commit_id.clone(), PathBuf::from("file1.txt"))
                 .block_on()
                 .unwrap();
         let type_file = commit_tree_file.file_type().block_on().unwrap();
         assert!(matches!(type_file, FileType::File));
+
+        let commit_tree_symlink =
+            CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("symlink"))
+                .block_on()
+                .unwrap();
+        let type_symlink = commit_tree_symlink.file_type().block_on().unwrap();
+        assert!(matches!(type_symlink, FileType::Symlink));
+    }
+
+    #[test]
+    fn test_read_symlink_file() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo();
+        let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("symlink"))
+            .block_on()
+            .unwrap();
+
+        let target = commit_tree.read_link().block_on().unwrap();
+        assert_eq!(target, PathBuf::from("file1.txt"));
     }
 }

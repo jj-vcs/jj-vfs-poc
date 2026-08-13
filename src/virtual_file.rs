@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::SystemTime;
 
@@ -11,6 +12,7 @@ use crate::jj_error::JjError;
 pub enum FileType {
     File,
     Directory,
+    Symlink,
 }
 
 pub struct FileAttributes {
@@ -39,6 +41,9 @@ pub type DirectoryStream = BoxStream<'static, DirectoryEntry>;
 pub trait VirtualFile: Send + Sync {
     async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError>;
     async fn list(&self) -> Result<DirectoryStream, JjError>;
+    async fn read_link(&self) -> Result<PathBuf, JjError> {
+        Err(JjError::NotASymlink)
+    }
     async fn attributes(&self) -> Result<FileAttributes, JjError>;
     async fn file_type(&self) -> Result<FileType, JjError>;
 }

@@ -8,11 +8,14 @@ pub enum JjError {
     #[error("Not found")]
     NotFound,
 
-    #[error("Expected a directory, but found a file")]
+    #[error("Expected a directory")]
     NotADirectory,
 
-    #[error("Expected a file, but found a directory")]
+    #[error("Expected a file")]
     NotAFile,
+
+    #[error("Expected a symlink")]
+    NotASymlink,
 
     #[error("{0}")]
     IO(#[from] std::io::Error),
