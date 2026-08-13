@@ -136,7 +136,7 @@ mod tests {
     use pollster::FutureExt as _;
 
     use super::*;
-    use crate::vfs::test_helpers::setup_test_repo;
+    use crate::test_helpers::setup_test_repo;
     use crate::virtual_file::VirtualFile;
 
     #[test]
