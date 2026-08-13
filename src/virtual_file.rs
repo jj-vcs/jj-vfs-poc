@@ -12,15 +12,6 @@ pub enum FileType {
     Directory,
 }
 
-impl From<FileType> for fuser::FileType {
-    fn from(file_type: FileType) -> Self {
-        match file_type {
-            FileType::File => fuser::FileType::RegularFile,
-            FileType::Directory => fuser::FileType::Directory,
-        }
-    }
-}
-
 pub struct DirectoryEntry {
     pub name: String,
     pub file_type: FileType,

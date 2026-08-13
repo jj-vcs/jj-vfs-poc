@@ -160,6 +160,26 @@ impl<FS: JjFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
     }
 }
 
+impl From<crate::virtual_file::FileType> for FileType {
+    fn from(file_type: crate::virtual_file::FileType) -> Self {
+        match file_type {
+            crate::virtual_file::FileType::File => FileType::RegularFile,
+            crate::virtual_file::FileType::Directory => FileType::Directory,
+        }
+    }
+}
+
+impl From<JjError> for Errno {
+    fn from(value: JjError) -> Self {
+        match value {
+            JjError::NotFound => Errno::ENOENT,
+            JjError::NotADirectory => Errno::ENOTDIR,
+            JjError::NotAFile => Errno::EISDIR,
+            _ => Errno::EIO,
+        }
+    }
+}
+
 fn create_attr(ino: INodeNo, size: u64, file_type: crate::virtual_file::FileType) -> FileAttr {
     FileAttr {
         ino,
