@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -8,8 +7,11 @@ use jj_lib::repo::ReadonlyRepo;
 
 use crate::commit_tree_file::CommitTreeFile;
 use crate::commits_directory::CommitsDirectory;
+use crate::hardcoded_directory::HardcodedDirectory;
 use crate::jj_error::JjError;
 use crate::path_mapper::PathMapper;
+use crate::virtual_file::DirectoryEntry;
+use crate::virtual_file::FileType;
 use crate::virtual_file::VirtualFile;
 
 pub struct AllCommitsPathMapper {
@@ -26,22 +28,28 @@ impl AllCommitsPathMapper {
 impl PathMapper for AllCommitsPathMapper {
     #[tracing::instrument(skip(self))]
     async fn get_entry(&self, path: &Path) -> Result<Box<dyn VirtualFile>, JjError> {
-        if path == Path::new("") {
-            Ok(Box::new(CommitsDirectory::new(self.repo.clone())))
-        } else {
-            let mut components = path.iter();
-            let commit_id_str = components
-                .next()
-                .ok_or(JjError::NotFound)?
-                .to_str()
-                .ok_or(JjError::InvalidPath)?;
-            let commit_id = CommitId::try_from_hex(commit_id_str).ok_or(JjError::NotFound)?;
+        let mut segments = path.iter();
 
-            let remaining_path: PathBuf = components.collect();
+        let Some(first) = segments.next() else {
+            return Ok(Box::new(HardcodedDirectory::new(vec![DirectoryEntry {
+                name: "commits".to_string(),
+                file_type: FileType::Directory,
+            }])));
+        };
 
-            Ok(Box::new(
-                CommitTreeFile::new(&self.repo, commit_id, remaining_path).await?,
-            ))
+        match first.to_str().ok_or(JjError::InvalidPath)? {
+            "commits" => {
+                let Some(commit_id_str) = segments.next() else {
+                    return Ok(Box::new(CommitsDirectory::new(self.repo.clone())));
+                };
+                let commit_id =
+                    CommitId::try_from_hex(commit_id_str.to_str().ok_or(JjError::InvalidPath)?)
+                        .ok_or(JjError::NotFound)?;
+                Ok(Box::new(
+                    CommitTreeFile::new(&self.repo, commit_id, segments.collect()).await?,
+                ))
+            }
+            _ => Err(JjError::NotFound),
         }
     }
 }
@@ -68,9 +76,9 @@ mod tests {
         let mapper = AllCommitsPathMapper { repo };
 
         let commit_hex = commit_id.hex();
-        let path = Path::new(&commit_hex);
+        let path = Path::new("commits").join(&commit_hex);
 
-        let entry = mapper.get_entry(path).await.unwrap();
+        let entry = mapper.get_entry(&path).await.unwrap();
         assert!(entry.list().await.is_ok());
     }
 
@@ -80,8 +88,7 @@ mod tests {
         let mapper = AllCommitsPathMapper { repo };
 
         let commit_hex = commit_id.hex();
-        let mut path = PathBuf::from(&commit_hex);
-        path.push("file1.txt");
+        let path = Path::new("commits").join(&commit_hex).join("file1.txt");
 
         let entry = mapper.get_entry(&path).await.unwrap();
         assert!(entry.read().await.is_ok());

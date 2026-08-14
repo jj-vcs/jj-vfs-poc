@@ -22,6 +22,7 @@ pub struct FileAttributes {
     pub modified: SystemTime,
 }
 
+#[derive(Clone)]
 pub struct DirectoryEntry {
     pub name: String,
     pub file_type: FileType,
@@ -39,11 +40,18 @@ pub type DirectoryStream = BoxStream<'static, DirectoryEntry>;
 /// filesystem (jj-lib in this case) to get the data for a file.
 #[async_trait]
 pub trait VirtualFile: Send + Sync {
-    async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError>;
-    async fn list(&self) -> Result<DirectoryStream, JjError>;
+    async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError> {
+        Err(JjError::NotAFile)
+    }
+
+    async fn list(&self) -> Result<DirectoryStream, JjError> {
+        Err(JjError::NotADirectory)
+    }
+
     async fn read_link(&self) -> Result<PathBuf, JjError> {
         Err(JjError::NotASymlink)
     }
+
     async fn attributes(&self) -> Result<FileAttributes, JjError>;
     async fn file_type(&self) -> Result<FileType, JjError>;
 }
