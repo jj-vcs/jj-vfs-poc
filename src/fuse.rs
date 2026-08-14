@@ -64,10 +64,8 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
             self,
             reply,
             async move {
-                let ino = inode_map
-                    .get_ino(parent, name.to_str().ok_or(JjError::InvalidPath)?)
-                    .await?;
-                let path = inode_map.get_path(ino).await?;
+                let ino = inode_map.get_ino(parent, name.to_str().ok_or(JjError::InvalidPath)?)?;
+                let path = inode_map.get_path(ino)?;
                 let attr = fs.getattr(&path).await?;
                 Ok(attr.to_fuse(ino))
             },
@@ -82,7 +80,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
             self,
             reply,
             async move {
-                let path = inode_map.get_path(ino).await?;
+                let path = inode_map.get_path(ino)?;
                 let attr = fs.getattr(&path).await?;
                 Ok(attr.to_fuse(ino))
             },
@@ -107,7 +105,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
             self,
             reply,
             async move {
-                let path = inode_map.get_path(ino).await?;
+                let path = inode_map.get_path(ino)?;
                 fs.read(&path, offset, size).await
             },
             |reply: ReplyData, content: Box<[u8]>| reply.data(&content)
@@ -133,20 +131,20 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
                 }
 
                 if offset < 2 {
-                    let parent_ino = inode_map.get_parent_ino(ino).await?;
+                    let parent_ino = inode_map.get_parent_ino(ino)?;
                     if reply.add(parent_ino, 2, FileType::Directory, "..") {
                         return Ok(());
                     }
                 }
 
-                let path = inode_map.get_path(ino).await?;
+                let path = inode_map.get_path(ino)?;
                 let skip = offset.saturating_sub(2) as usize;
                 let entries = fs.readdir(&path).await?;
                 let mut stream = stream::iter(3..).zip(entries).skip(skip);
                 while let Some((index, entry)) = stream.next().await {
                     let name = entry.name.as_str();
                     let file_type = entry.file_type.into();
-                    let child_ino = inode_map.get_ino(ino, name).await?;
+                    let child_ino = inode_map.get_ino(ino, name)?;
                     if reply.add(child_ino, index, file_type, name) {
                         break;
                     }
@@ -164,7 +162,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
             self,
             reply,
             async {
-                let path = inode_map.get_path(ino).await?;
+                let path = inode_map.get_path(ino)?;
                 let target = fs.read_link(&path).await?;
                 let bytes = target.as_os_str().as_bytes().to_vec();
                 Ok(bytes)

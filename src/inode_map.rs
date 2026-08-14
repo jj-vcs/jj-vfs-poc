@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use fuser::INodeNo;
-use futures::lock::Mutex;
 use ustr::Ustr;
 
 use crate::jj_error::JjError;
@@ -40,8 +40,8 @@ impl InodeMap {
         }
     }
 
-    pub async fn get_path(&self, mut ino: INodeNo) -> Result<PathBuf, JjError> {
-        let inodes = self.inodes.lock().await;
+    pub fn get_path(&self, mut ino: INodeNo) -> Result<PathBuf, JjError> {
+        let inodes = self.inodes.lock().unwrap();
         let mut components = Vec::with_capacity(8);
         while ino != ROOT_INODE {
             let entry = inodes.get(&ino).ok_or(JjError::NotFound)?;
@@ -54,19 +54,19 @@ impl InodeMap {
         Ok(path)
     }
 
-    pub async fn get_parent_ino(&self, ino: INodeNo) -> Result<INodeNo, JjError> {
+    pub fn get_parent_ino(&self, ino: INodeNo) -> Result<INodeNo, JjError> {
         Ok(self
             .inodes
             .lock()
-            .await
+            .unwrap()
             .get(&ino)
             .ok_or(JjError::NotFound)?
             .parent)
     }
 
-    pub async fn get_ino(&self, parent: INodeNo, name: &str) -> Result<INodeNo, JjError> {
+    pub fn get_ino(&self, parent: INodeNo, name: &str) -> Result<INodeNo, JjError> {
         let name = Ustr::from(name);
-        let mut inodes = self.inodes.lock().await;
+        let mut inodes = self.inodes.lock().unwrap();
         let children = &mut inodes.get_mut(&parent).ok_or(JjError::NotFound)?.children;
         match children.get(&name) {
             Some(&ino) => Ok(ino),
@@ -95,8 +95,6 @@ impl Default for InodeMap {
 
 #[cfg(test)]
 mod tests {
-    use pollster::FutureExt;
-
     use super::*;
 
     #[test]
@@ -104,14 +102,11 @@ mod tests {
         let inodes = InodeMap::new();
 
         // Root path is empty
-        assert_eq!(
-            inodes.get_path(ROOT_INODE).block_on().unwrap(),
-            PathBuf::from("")
-        );
+        assert_eq!(inodes.get_path(ROOT_INODE).unwrap(), PathBuf::from(""));
 
         // Manually populate some inodes for testing get_path
         {
-            let mut map = inodes.inodes.lock().block_on();
+            let mut map = inodes.inodes.lock().unwrap();
             map.insert(
                 INodeNo(2),
                 Entry {
@@ -130,12 +125,9 @@ mod tests {
             );
         }
 
+        assert_eq!(inodes.get_path(INodeNo(2)).unwrap(), PathBuf::from("foo"));
         assert_eq!(
-            inodes.get_path(INodeNo(2)).block_on().unwrap(),
-            PathBuf::from("foo")
-        );
-        assert_eq!(
-            inodes.get_path(INodeNo(3)).block_on().unwrap(),
+            inodes.get_path(INodeNo(3)).unwrap(),
             PathBuf::from("foo/bar.txt")
         );
     }
@@ -145,27 +137,24 @@ mod tests {
         let inodes = InodeMap::new();
 
         // Create "foo" under root
-        let foo_ino = inodes.get_ino(ROOT_INODE, "foo").block_on().unwrap();
+        let foo_ino = inodes.get_ino(ROOT_INODE, "foo").unwrap();
         assert_eq!(foo_ino, INodeNo(2));
-        assert_eq!(
-            inodes.get_path(foo_ino).block_on().unwrap(),
-            PathBuf::from("foo")
-        );
+        assert_eq!(inodes.get_path(foo_ino).unwrap(), PathBuf::from("foo"));
 
         // Get "foo" again, should return existing INO 2
-        let foo_ino_again = inodes.get_ino(ROOT_INODE, "foo").block_on().unwrap();
+        let foo_ino_again = inodes.get_ino(ROOT_INODE, "foo").unwrap();
         assert_eq!(foo_ino_again, INodeNo(2));
 
         // Create "bar.txt" under "foo"
-        let bar_ino = inodes.get_ino(foo_ino, "bar.txt").block_on().unwrap();
+        let bar_ino = inodes.get_ino(foo_ino, "bar.txt").unwrap();
         assert_eq!(bar_ino, INodeNo(3));
         assert_eq!(
-            inodes.get_path(bar_ino).block_on().unwrap(),
+            inodes.get_path(bar_ino).unwrap(),
             PathBuf::from("foo/bar.txt")
         );
 
         // Error cases: Non-existent parent
-        let err = inodes.get_ino(INodeNo(999), "bar.txt").block_on();
+        let err = inodes.get_ino(INodeNo(999), "bar.txt");
         assert!(matches!(err, Err(JjError::NotFound)));
     }
 
