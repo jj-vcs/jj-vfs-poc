@@ -10,3 +10,4 @@ pub mod path_mapper_all_commits;
 pub mod test_helpers;
 pub mod vfs;
 pub mod virtual_file;
+pub mod workspace_directory;
