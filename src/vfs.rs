@@ -21,11 +21,11 @@ pub trait VirtualFilesystem {
     async fn read_link(&self, path: &Path) -> Result<PathBuf, JjError>;
 }
 
-pub struct PathMappedVFS<P: PathMapper> {
+pub struct PathMappedVfs<P: PathMapper> {
     path_mapper: Arc<P>,
 }
 
-impl<P: PathMapper> PathMappedVFS<P> {
+impl<P: PathMapper> PathMappedVfs<P> {
     pub fn new(path_mapper: P) -> Self {
         Self {
             path_mapper: Arc::new(path_mapper),
@@ -34,7 +34,7 @@ impl<P: PathMapper> PathMappedVFS<P> {
 }
 
 #[async_trait]
-impl<P: PathMapper> VirtualFilesystem for PathMappedVFS<P> {
+impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
     async fn getattr(&self, path: &Path) -> Result<FileAttributes, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         virtual_file.attributes().await
@@ -183,7 +183,7 @@ mod tests {
         }
     }
 
-    fn setup_test_vfs() -> PathMappedVFS<MockPathMapper> {
+    fn setup_test_vfs() -> PathMappedVfs<MockPathMapper> {
         let mut root_children = HashMap::new();
         root_children.insert(
             "file.txt".to_string(),
@@ -207,7 +207,7 @@ mod tests {
         let root = Arc::new(MockVirtualFile::Directory(root_children));
         let mapper = MockPathMapper { root };
 
-        PathMappedVFS::new(mapper)
+        PathMappedVfs::new(mapper)
     }
 
     #[test]

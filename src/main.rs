@@ -6,7 +6,7 @@ use jj_lib::settings::UserSettings;
 use jj_lib::workspace::Workspace;
 use jj_lib::workspace::default_working_copy_factories;
 use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
-use jjfsd::vfs::PathMappedVFS;
+use jjfsd::vfs::PathMappedVfs;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -43,7 +43,7 @@ fn main() {
         .expect("Failed to load repo at head");
 
     let mapper = AllCommitsPathMapper::new(readonly_repo);
-    let filesystem = PathMappedVFS::new(mapper);
+    let filesystem = PathMappedVfs::new(mapper);
 
     println!("Mounting JjVfs at {}...", mountpoint);
     let _session = fuser::spawn_mount(
