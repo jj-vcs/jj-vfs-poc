@@ -25,11 +25,11 @@ async fn test_vfs_read_real_repo_files() {
 
     // 3. Look up the commit directory (the commit hex is the first level of
     //    components in the path mapper)
-    let commit_hex = commit_id.hex();
+    let commit_dir = format!("commits/{}", commit_id.hex());
 
     // In JjVfsState, looking up a child of root (parent = 1) is done by name:
     let commit_dir_attr = fs
-        .get_attributes(Path::new(&commit_hex))
+        .get_attributes(Path::new(&commit_dir))
         .await
         .expect("Failed to lookup commit directory");
 
@@ -38,7 +38,7 @@ async fn test_vfs_read_real_repo_files() {
 
     // 4. Look up "file1.txt" inside the commit directory
     let file1_attr = fs
-        .get_attributes(Path::new(&format!("{}/file1.txt", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/file1.txt", commit_dir)))
         .await
         .expect("Failed to lookup file1.txt");
     assert!(matches!(file1_attr.file_type, FileType::File));
@@ -46,21 +46,21 @@ async fn test_vfs_read_real_repo_files() {
 
     // 5. Read the content of "file1.txt"
     let content = fs
-        .read(Path::new(&format!("{}/file1.txt", commit_hex)), 0, 15)
+        .read(Path::new(&format!("{}/file1.txt", commit_dir)), 0, 15)
         .await
         .expect("Failed to read file1.txt");
     assert_eq!(&*content, b"hello content 1");
 
     // 6. Look up "dir" inside the commit directory
     let dir_attr = fs
-        .get_attributes(Path::new(&format!("{}/dir", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/dir", commit_dir)))
         .await
         .expect("Failed to lookup dir");
     assert!(matches!(dir_attr.file_type, FileType::Directory));
 
     // 7. Look up "file2.txt" inside "dir"
     let file2_attr = fs
-        .get_attributes(Path::new(&format!("{}/dir/file2.txt", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/dir/file2.txt", commit_dir)))
         .await
         .expect("Failed to lookup file2.txt");
     assert!(matches!(file2_attr.file_type, FileType::File));
@@ -68,14 +68,14 @@ async fn test_vfs_read_real_repo_files() {
 
     // 8. Read the content of "file2.txt"
     let content2 = fs
-        .read(Path::new(&format!("{}/dir/file2.txt", commit_hex)), 0, 15)
+        .read(Path::new(&format!("{}/dir/file2.txt", commit_dir)), 0, 15)
         .await
         .expect("Failed to read file2.txt");
     assert_eq!(&*content2, b"hello content 2");
 
     // 9. Look up "symlink" inside the commit directory
     let symlink_attr = fs
-        .get_attributes(Path::new(&format!("{}/symlink", commit_hex)))
+        .get_attributes(Path::new(&format!("{}/symlink", commit_dir)))
         .await
         .expect("Failed to lookup symlink");
     assert!(matches!(symlink_attr.file_type, FileType::Symlink));
@@ -83,7 +83,7 @@ async fn test_vfs_read_real_repo_files() {
 
     // 10. Read the target of the symlink
     let target = fs
-        .read_link(Path::new(&format!("{}/symlink", commit_hex)))
+        .read_link(Path::new(&format!("{}/symlink", commit_dir)))
         .await
         .expect("Failed to read symlink");
     assert_eq!(target, Path::new("file1.txt").to_path_buf());
@@ -118,7 +118,7 @@ async fn test_vfs_mount() {
 
     // 5. Verify the files are visible and readable via standard fs
     let commit_hex = commit_id.hex();
-    let commit_dir = mountpoint.join(&commit_hex);
+    let commit_dir = mountpoint.join("commits").join(&commit_hex);
 
     // Wait a bit or retry to make sure FUSE has finished mounting and is ready.
     let mut success = false;
