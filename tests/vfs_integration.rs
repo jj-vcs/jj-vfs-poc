@@ -73,6 +73,21 @@ fn test_vfs_read_real_repo_files() {
         .block_on()
         .expect("Failed to read file2.txt");
     assert_eq!(&*content2, b"hello content 2");
+
+    // 9. Look up "symlink" inside the commit directory
+    let symlink_attr = fs
+        .getattr(Path::new(&format!("{}/symlink", commit_hex)))
+        .block_on()
+        .expect("Failed to lookup symlink");
+    assert!(matches!(symlink_attr.file_type, FileType::Symlink));
+    assert_eq!(symlink_attr.size, 9); // "file1.txt" is 9 bytes
+
+    // 10. Read the target of the symlink
+    let target = fs
+        .read_link(Path::new(&format!("{}/symlink", commit_hex)))
+        .block_on()
+        .expect("Failed to read symlink");
+    assert_eq!(target, Path::new("file1.txt").to_path_buf());
 }
 
 #[test]
@@ -131,6 +146,15 @@ fn test_vfs_mount() {
     assert!(file2_path.exists());
     let file2_content = std::fs::read_to_string(&file2_path).expect("Failed to read file2.txt");
     assert_eq!(file2_content, "hello content 2");
+
+    // Check symlink
+    let symlink_path = commit_dir.join("symlink");
+    assert!(symlink_path.exists());
+    let symlink_metadata =
+        std::fs::symlink_metadata(&symlink_path).expect("Failed to get symlink metadata");
+    assert!(symlink_metadata.file_type().is_symlink());
+    let symlink_target = std::fs::read_link(&symlink_path).expect("Failed to read symlink");
+    assert_eq!(symlink_target, Path::new("file1.txt").to_path_buf());
 
     // Explicitly unmount/drop session
     drop(session);

@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
@@ -156,8 +157,20 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         );
     }
 
-    fn readlink(&self, _req: &Request, _ino: INodeNo, reply: ReplyData) {
-        reply.error(Errno::ENOSYS);
+    fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
+        let inode_map = self.inode_map.clone();
+        let fs = self.fs.clone();
+        reply_async!(
+            self,
+            reply,
+            async {
+                let path = inode_map.get_path(ino).await?;
+                let target = fs.read_link(&path).await?;
+                let bytes = target.as_os_str().as_bytes().to_vec();
+                Ok(bytes)
+            },
+            |reply: ReplyData, target: Vec<u8>| reply.data(&target)
+        );
     }
 }
 
@@ -194,6 +207,7 @@ impl From<crate::virtual_file::FileType> for FileType {
         match file_type {
             crate::virtual_file::FileType::File => FileType::RegularFile,
             crate::virtual_file::FileType::Directory => FileType::Directory,
+            crate::virtual_file::FileType::Symlink => FileType::Symlink,
         }
     }
 }
@@ -204,6 +218,7 @@ impl From<JjError> for Errno {
             JjError::NotFound => Errno::ENOENT,
             JjError::NotADirectory => Errno::ENOTDIR,
             JjError::NotAFile => Errno::EISDIR,
+            JjError::NotASymlink => Errno::EINVAL,
             _ => Errno::EIO,
         }
     }
