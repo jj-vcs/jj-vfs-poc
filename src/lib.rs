@@ -1,6 +1,7 @@
 pub mod commit_tree_file;
 pub mod commits_directory;
 pub mod fuse;
+pub mod hardcoded_directory;
 pub mod inode_map;
 pub mod jj_error;
 pub mod path_mapper;
