@@ -24,6 +24,7 @@ impl AllCommitsPathMapper {
 
 #[async_trait]
 impl PathMapper for AllCommitsPathMapper {
+    #[tracing::instrument(skip(self))]
     async fn get_entry(&self, path: &Path) -> Result<Box<dyn VirtualFile>, JjError> {
         if path == Path::new("") {
             Ok(Box::new(CommitsDirectory::new(self.repo.clone())))

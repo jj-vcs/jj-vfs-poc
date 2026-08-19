@@ -40,6 +40,7 @@ impl InodeMap {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn get_path(&self, mut ino: INodeNo) -> Result<PathBuf, JjError> {
         let inodes = self.inodes.lock().unwrap();
         let mut components = Vec::with_capacity(8);
@@ -54,6 +55,7 @@ impl InodeMap {
         Ok(path)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn get_parent_ino(&self, ino: INodeNo) -> Result<INodeNo, JjError> {
         Ok(self
             .inodes
@@ -64,6 +66,7 @@ impl InodeMap {
             .parent)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn get_ino(&self, parent: INodeNo, name: &str) -> Result<INodeNo, JjError> {
         let name = Ustr::from(name);
         let mut inodes = self.inodes.lock().unwrap();

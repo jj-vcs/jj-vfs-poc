@@ -33,6 +33,7 @@ impl VirtualFile for CommitsDirectory {
         Err(JjError::NotAFile)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn list(&self) -> Result<DirectoryStream, JjError> {
         let expression = jj_lib::revset::ResolvedRevsetExpression::all();
         let revset = expression
@@ -55,6 +56,7 @@ impl VirtualFile for CommitsDirectory {
         Ok(Box::pin(futures::stream::iter(commits)))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn attributes(&self) -> Result<FileAttributes, JjError> {
         Ok(FileAttributes {
             size: 0,
