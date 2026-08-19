@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -9,6 +10,7 @@ use jj_lib::repo::ReadonlyRepo;
 use crate::commit_tree_file::CommitTreeFile;
 use crate::commits_directory::CommitsDirectory;
 use crate::jj_error::JjError;
+use crate::hardcoded_symlink::HardcodedSymlink;
 use crate::path_mapper::PathMapper;
 use crate::static_directory::StaticDirectory;
 use crate::virtual_file::DirectoryEntry;
@@ -18,11 +20,15 @@ use crate::workspaces_directory::WorkspacesDirectory;
 
 pub struct AllCommitsPathMapper {
     repo: Arc<ReadonlyRepo>,
+    jj_path: PathBuf,
 }
 
 impl AllCommitsPathMapper {
-    pub fn new(repo: Arc<ReadonlyRepo>) -> Self {
-        Self { repo }
+    pub fn new(repo: Arc<ReadonlyRepo>, jj_path: PathBuf) -> Self {
+        Self {
+            repo,
+            jj_path,
+        }
     }
 }
 
@@ -72,12 +78,18 @@ impl PathMapper for AllCommitsPathMapper {
                     .ok_or(JjError::InvalidPath)?;
                 let wc_commit_ids = repo.view().wc_commit_ids();
                 let workspace_name = WorkspaceName::new(workspace_name_str);
+
+                let path = segments.collect::<PathBuf>();
+                if path.starts_with(".jj") {
+                    return Ok(Box::new(HardcodedSymlink::new(self.jj_path.join(path))));
+                }
+
                 let commit_id = wc_commit_ids
                     .get(workspace_name)
                     .cloned()
                     .ok_or(JjError::NotFound)?;
                 Ok(Box::new(
-                    CommitTreeFile::new(&repo, commit_id, segments.collect()).await?,
+                    CommitTreeFile::new(&self.repo, commit_id, path).await?,
                 ))
             }
             _ => Err(JjError::NotFound),
@@ -93,10 +105,14 @@ mod tests {
     use super::*;
     use crate::test_helpers::setup_test_repo;
 
+    fn new_mapper(temp_dir: &tempfile::TempDir, repo: Arc<ReadonlyRepo>) -> AllCommitsPathMapper {
+        AllCommitsPathMapper::new(repo, temp_dir.path().to_path_buf())
+    }
+
     #[tokio::test]
     async fn test_all_commit_trees_mapper_root() {
-        let (_temp_dir, repo, _commit) = setup_test_repo().await;
-        let mapper = AllCommitsPathMapper { repo };
+        let (temp_dir, repo, _commit) = setup_test_repo().await;
+        let mapper = new_mapper(&temp_dir, repo);
 
         let entry = mapper.get_entry(Path::new("")).await.unwrap();
         assert!(entry.list().await.is_ok());
@@ -104,8 +120,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_commit_trees_mapper_commit_root() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
-        let mapper = AllCommitsPathMapper { repo };
+        let (temp_dir, repo, commit_id) = setup_test_repo().await;
+        let mapper = new_mapper(&temp_dir, repo);
 
         let commit_hex = commit_id.hex();
         let path = Path::new("commits").join(&commit_hex);
@@ -116,8 +132,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_commit_trees_mapper_commit_subpath() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
-        let mapper = AllCommitsPathMapper { repo };
+        let (temp_dir, repo, commit_id) = setup_test_repo().await;
+        let mapper = new_mapper(&temp_dir, repo);
 
         let commit_hex = commit_id.hex();
         let path = Path::new("commits").join(&commit_hex).join("file1.txt");
@@ -128,8 +144,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_commit_trees_mapper_invalid_commit_id() {
-        let (_temp_dir, repo, _commit) = setup_test_repo().await;
-        let mapper = AllCommitsPathMapper { repo };
+        let (temp_dir, repo, _commit) = setup_test_repo().await;
+        let mapper = new_mapper(&temp_dir, repo);
 
         let path = Path::new("invalid_commit_hex");
         let err = match mapper.get_entry(path).await {
@@ -141,8 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_commit_trees_mapper_workspaces_root() {
-        let (_temp_dir, repo, _commit) = setup_test_repo().await;
-        let mapper = AllCommitsPathMapper { repo };
+        let (temp_dir, repo, _commit) = setup_test_repo().await;
+        let mapper = new_mapper(&temp_dir, repo);
 
         let entry = mapper.get_entry(Path::new("workspaces")).await.unwrap();
         let list = entry.list().await.unwrap();
@@ -153,8 +169,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_commit_trees_mapper_workspace_file() {
-        let (_temp_dir, repo, _commit) = setup_test_repo().await;
-        let mapper = AllCommitsPathMapper { repo };
+        let (temp_dir, repo, _commit) = setup_test_repo().await;
+        let mapper = new_mapper(&temp_dir, repo);
 
         let path = Path::new("workspaces").join("default").join("file1.txt");
         let entry = mapper.get_entry(&path).await.unwrap();

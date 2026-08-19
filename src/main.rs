@@ -51,7 +51,7 @@ fn main() {
         .block_on(repo_loader.load_at_head())
         .expect("Failed to load repo at head");
 
-    let mapper = AllCommitsPathMapper::new(readonly_repo);
+    let mapper = AllCommitsPathMapper::new(readonly_repo, workspace_root.to_path_buf());
     let filesystem = PathMappedVfs::new(mapper);
 
     println!("Mounting JjVfs at {}...", mountpoint);

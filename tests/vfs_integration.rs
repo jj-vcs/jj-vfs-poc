@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use jj_lib::object_id::ObjectId as _;
-use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
 // TODO: For simplicity in this PoC, we compile test_helpers directly using a
 // path attribute. A cleaner, long-term solution would be to define a
 // `test-helpers` Cargo feature in the library crate, make `tempfile` and
@@ -10,6 +9,7 @@ use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
 // feature enabled in `[dev-dependencies]`.
 #[path = "../src/test_helpers.rs"]
 mod test_helpers;
+use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
 use jjfsd::vfs::PathMappedVfs;
 use jjfsd::vfs::VirtualFilesystem;
 use jjfsd::virtual_file::FileType;
@@ -17,10 +17,10 @@ use jjfsd::virtual_file::FileType;
 #[tokio::test]
 async fn test_vfs_read_real_repo_files() {
     // 1. Set up a real test jj repository with commits and files
-    let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
+    let (temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
 
     // 2. Initialize the mapper and JjVfsState
-    let mapper = AllCommitsPathMapper::new(repo);
+    let mapper = AllCommitsPathMapper::new(repo, temp_dir.path().to_path_buf());
     let fs = PathMappedVfs::new(mapper);
 
     // 3. Look up the commit directory (the commit hex is the first level of
@@ -92,10 +92,10 @@ async fn test_vfs_read_real_repo_files() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_vfs_mount() {
     // 1. Set up a real test jj repository with commits and files
-    let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
+    let (temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
 
     // 2. Initialize the mapper and JjVfsState
-    let mapper = AllCommitsPathMapper::new(repo);
+    let mapper = AllCommitsPathMapper::new(repo, temp_dir.path().to_path_buf());
     let fs = PathMappedVfs::new(mapper);
 
     // 3. Create a temporary mountpoint directory

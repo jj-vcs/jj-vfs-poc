@@ -3,6 +3,7 @@ pub mod commits_directory;
 pub mod fuse;
 pub mod inode_map;
 pub mod jj_error;
+pub mod hardcoded_symlink;
 pub mod path_mapper;
 pub mod path_mapper_all_commits;
 pub mod static_directory;
