@@ -68,7 +68,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
             async move {
                 let ino = inode_map.get_ino(parent, name.to_str().ok_or(JjError::InvalidPath)?)?;
                 let path = inode_map.get_path(ino)?;
-                let attr = fs.getattr(&path).await?;
+                let attr = fs.get_attributes(&path).await?;
                 Ok(attr.to_fuse(ino))
             },
             |reply: ReplyEntry, attr| reply.entry(&TTL, &attr, fuser::Generation(0))
@@ -84,7 +84,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
             reply,
             async move {
                 let path = inode_map.get_path(ino)?;
-                let attr = fs.getattr(&path).await?;
+                let attr = fs.get_attributes(&path).await?;
                 Ok(attr.to_fuse(ino))
             },
             |reply: ReplyAttr, attr| reply.attr(&TTL, &attr)
@@ -144,7 +144,7 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
 
                 let path = inode_map.get_path(ino)?;
                 let skip = offset.saturating_sub(2) as usize;
-                let entries = fs.readdir(&path).await?;
+                let entries = fs.read_directory(&path).await?;
                 let mut stream = stream::iter(3..).zip(entries).skip(skip);
                 while let Some((index, entry)) = stream.next().await {
                     let name = entry.name.as_str();

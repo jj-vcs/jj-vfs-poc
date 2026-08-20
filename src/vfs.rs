@@ -15,9 +15,9 @@ use crate::virtual_file::FileAttributes;
 /// and the path mapper.
 #[async_trait]
 pub trait VirtualFilesystem {
-    async fn getattr(&self, path: &Path) -> Result<FileAttributes, JjError>; // TODO: create proper attributes struct
+    async fn get_attributes(&self, path: &Path) -> Result<FileAttributes, JjError>;
     async fn read(&self, path: &Path, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
-    async fn readdir(&self, path: &Path) -> Result<DirectoryStream, JjError>;
+    async fn read_directory(&self, path: &Path) -> Result<DirectoryStream, JjError>;
     async fn read_link(&self, path: &Path) -> Result<PathBuf, JjError>;
 }
 
@@ -36,7 +36,7 @@ impl<P: PathMapper> PathMappedVfs<P> {
 #[async_trait]
 impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
     #[tracing::instrument(skip(self))]
-    async fn getattr(&self, path: &Path) -> Result<FileAttributes, JjError> {
+    async fn get_attributes(&self, path: &Path) -> Result<FileAttributes, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         virtual_file.attributes().await
     }
@@ -54,7 +54,7 @@ impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn readdir(&self, path: &Path) -> Result<DirectoryStream, JjError> {
+    async fn read_directory(&self, path: &Path) -> Result<DirectoryStream, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         virtual_file.list().await
     }
@@ -236,7 +236,7 @@ mod tests {
         let fs = setup_test_vfs();
 
         let entries: Vec<_> = fs
-            .readdir(Path::new("dir"))
+            .read_directory(Path::new("dir"))
             .block_on()
             .unwrap()
             .collect()
@@ -251,14 +251,14 @@ mod tests {
     #[test]
     fn test_list_directory_not_a_directory() {
         let fs = setup_test_vfs();
-        let result = fs.readdir(Path::new("file.txt")).block_on();
+        let result = fs.read_directory(Path::new("file.txt")).block_on();
         assert!(matches!(result, Err(JjError::NotADirectory)));
     }
 
     #[test]
     fn test_list_directory_not_found() {
         let fs = setup_test_vfs();
-        let result = fs.readdir(Path::new("does_not_exist")).block_on();
+        let result = fs.read_directory(Path::new("does_not_exist")).block_on();
         assert!(matches!(result, Err(JjError::NotFound)));
     }
 
