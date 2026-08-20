@@ -141,6 +141,16 @@ fn test_vfs_mount() {
     let file1_content = std::fs::read_to_string(&file1_path).expect("Failed to read file1.txt");
     assert_eq!(file1_content, "hello content 1");
 
+    // Check partial read (ensures we don't return more data than requested, which
+    // fails in FUSE)
+    use std::io::Read as _;
+    let mut file1 = std::fs::File::open(&file1_path).expect("Failed to open file1.txt");
+    let mut partial_content = vec![0; 5];
+    file1
+        .read_exact(&mut partial_content)
+        .expect("Failed to read 5 bytes");
+    assert_eq!(partial_content, b"hello");
+
     // Check dir/file2.txt
     let file2_path = commit_dir.join("dir").join("file2.txt");
     assert!(file2_path.exists());
