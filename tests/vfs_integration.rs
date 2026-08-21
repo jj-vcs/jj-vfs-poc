@@ -13,12 +13,11 @@ mod test_helpers;
 use jjfsd::vfs::PathMappedVfs;
 use jjfsd::vfs::VirtualFilesystem;
 use jjfsd::virtual_file::FileType;
-use pollster::FutureExt as _;
 
-#[test]
-fn test_vfs_read_real_repo_files() {
+#[tokio::test]
+async fn test_vfs_read_real_repo_files() {
     // 1. Set up a real test jj repository with commits and files
-    let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo();
+    let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
 
     // 2. Initialize the mapper and JjVfsState
     let mapper = AllCommitsPathMapper::new(repo);
@@ -31,7 +30,7 @@ fn test_vfs_read_real_repo_files() {
     // In JjVfsState, looking up a child of root (parent = 1) is done by name:
     let commit_dir_attr = fs
         .get_attributes(Path::new(&commit_hex))
-        .block_on()
+        .await
         .expect("Failed to lookup commit directory");
 
     // Verify it is indeed a directory (kind = Directory)
@@ -40,7 +39,7 @@ fn test_vfs_read_real_repo_files() {
     // 4. Look up "file1.txt" inside the commit directory
     let file1_attr = fs
         .get_attributes(Path::new(&format!("{}/file1.txt", commit_hex)))
-        .block_on()
+        .await
         .expect("Failed to lookup file1.txt");
     assert!(matches!(file1_attr.file_type, FileType::File));
     assert_eq!(file1_attr.size, 15); // "hello content 1" is 15 bytes
@@ -48,21 +47,21 @@ fn test_vfs_read_real_repo_files() {
     // 5. Read the content of "file1.txt"
     let content = fs
         .read(Path::new(&format!("{}/file1.txt", commit_hex)), 0, 15)
-        .block_on()
+        .await
         .expect("Failed to read file1.txt");
     assert_eq!(&*content, b"hello content 1");
 
     // 6. Look up "dir" inside the commit directory
     let dir_attr = fs
         .get_attributes(Path::new(&format!("{}/dir", commit_hex)))
-        .block_on()
+        .await
         .expect("Failed to lookup dir");
     assert!(matches!(dir_attr.file_type, FileType::Directory));
 
     // 7. Look up "file2.txt" inside "dir"
     let file2_attr = fs
         .get_attributes(Path::new(&format!("{}/dir/file2.txt", commit_hex)))
-        .block_on()
+        .await
         .expect("Failed to lookup file2.txt");
     assert!(matches!(file2_attr.file_type, FileType::File));
     assert_eq!(file2_attr.size, 15); // "hello content 2" is 15 bytes
@@ -70,14 +69,14 @@ fn test_vfs_read_real_repo_files() {
     // 8. Read the content of "file2.txt"
     let content2 = fs
         .read(Path::new(&format!("{}/dir/file2.txt", commit_hex)), 0, 15)
-        .block_on()
+        .await
         .expect("Failed to read file2.txt");
     assert_eq!(&*content2, b"hello content 2");
 
     // 9. Look up "symlink" inside the commit directory
     let symlink_attr = fs
         .get_attributes(Path::new(&format!("{}/symlink", commit_hex)))
-        .block_on()
+        .await
         .expect("Failed to lookup symlink");
     assert!(matches!(symlink_attr.file_type, FileType::Symlink));
     assert_eq!(symlink_attr.size, 9); // "file1.txt" is 9 bytes
@@ -85,18 +84,15 @@ fn test_vfs_read_real_repo_files() {
     // 10. Read the target of the symlink
     let target = fs
         .read_link(Path::new(&format!("{}/symlink", commit_hex)))
-        .block_on()
+        .await
         .expect("Failed to read symlink");
     assert_eq!(target, Path::new("file1.txt").to_path_buf());
 }
 
-#[test]
-fn test_vfs_mount() {
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    let _guard = rt.enter();
-
+#[tokio::test(flavor = "multi_thread")]
+async fn test_vfs_mount() {
     // 1. Set up a real test jj repository with commits and files
-    let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo();
+    let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
 
     // 2. Initialize the mapper and JjVfsState
     let mapper = AllCommitsPathMapper::new(repo);
@@ -114,7 +110,7 @@ fn test_vfs_mount() {
     ];
 
     let session = fuser::spawn_mount(
-        jjfsd::fuse::JjFuse::new(Arc::new(fs), rt.handle().clone()),
+        jjfsd::fuse::JjFuse::new(Arc::new(fs), tokio::runtime::Handle::current()),
         &mountpoint,
         &config,
     )
@@ -131,7 +127,7 @@ fn test_vfs_mount() {
             success = true;
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     assert!(success, "Mount point did not become ready in time");
 

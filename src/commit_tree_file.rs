@@ -178,21 +178,20 @@ mod tests {
 
     use futures::AsyncReadExt as _;
     use futures::StreamExt as _;
-    use pollster::FutureExt as _;
 
     use super::*;
     use crate::test_helpers::setup_test_repo;
     use crate::virtual_file::VirtualFile;
 
-    #[test]
-    fn test_list_directory_root() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_list_directory_root() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from(""))
-            .block_on()
+            .await
             .unwrap();
 
-        let stream = commit_tree.list().block_on().unwrap();
-        let root_files: Vec<DirectoryEntry> = stream.collect().block_on();
+        let stream = commit_tree.list().await.unwrap();
+        let root_files: Vec<DirectoryEntry> = stream.collect().await;
 
         assert_eq!(root_files.len(), 3);
         assert_eq!(root_files[0].name, "dir");
@@ -203,58 +202,58 @@ mod tests {
         assert!(matches!(root_files[2].file_type, FileType::Symlink));
     }
 
-    #[test]
-    fn test_list_directory_sub() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_list_directory_sub() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("dir"))
-            .block_on()
+            .await
             .unwrap();
 
-        let stream = commit_tree.list().block_on().unwrap();
-        let dir_files: Vec<DirectoryEntry> = stream.collect().block_on();
+        let stream = commit_tree.list().await.unwrap();
+        let dir_files: Vec<DirectoryEntry> = stream.collect().await;
 
         assert_eq!(dir_files.len(), 1);
         let file2 = dir_files.iter().find(|f| f.name == "file2.txt").unwrap();
         assert!(matches!(file2.file_type, FileType::File));
     }
 
-    #[test]
-    fn test_file_size() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_file_size() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("file1.txt"))
-            .block_on()
+            .await
             .unwrap();
 
-        let size = commit_tree.attributes().block_on().unwrap().size;
+        let size = commit_tree.attributes().await.unwrap().size;
         assert_eq!(size, b"hello content 1".len() as u64);
     }
 
-    #[test]
-    fn test_read_file() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_read_file() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("file1.txt"))
-            .block_on()
+            .await
             .unwrap();
 
-        let mut reader = commit_tree.read().block_on().unwrap();
+        let mut reader = commit_tree.read().await.unwrap();
         let mut contents = Vec::new();
-        reader.read_to_end(&mut contents).block_on().unwrap();
+        reader.read_to_end(&mut contents).await.unwrap();
         assert_eq!(contents, b"hello content 1");
     }
 
-    #[test]
-    fn test_invalid_path() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_invalid_path() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         // Setup CommitTreeFile with invalid path
         let commit_tree = CommitTreeFile::new(
             repo.as_ref(),
             commit_id.clone(),
             PathBuf::from("some/../path"),
         )
-        .block_on()
+        .await
         .unwrap();
 
-        let err = match commit_tree.list().block_on() {
+        let err = match commit_tree.list().await {
             Err(e) => e,
             Ok(_) => panic!("Expected an error"),
         };
@@ -262,27 +261,27 @@ mod tests {
 
         let commit_tree =
             CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("some/../path"))
-                .block_on()
+                .await
                 .unwrap();
-        let err = match commit_tree.read().block_on() {
+        let err = match commit_tree.read().await {
             Err(e) => e,
             Ok(_) => panic!("Expected an error"),
         };
         assert!(matches!(err, JjError::InvalidPath));
     }
 
-    #[test]
-    fn test_not_found() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_not_found() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(
             repo.as_ref(),
             commit_id.clone(),
             PathBuf::from("non_existent_dir"),
         )
-        .block_on()
+        .await
         .unwrap();
 
-        let err = match commit_tree.list().block_on() {
+        let err = match commit_tree.list().await {
             Err(e) => e,
             Ok(_) => panic!("Expected an error"),
         };
@@ -293,77 +292,77 @@ mod tests {
             commit_id,
             PathBuf::from("non_existent_file.txt"),
         )
-        .block_on()
+        .await
         .unwrap();
-        let err = match commit_tree.read().block_on() {
+        let err = match commit_tree.read().await {
             Err(e) => e,
             Ok(_) => panic!("Expected an error"),
         };
         assert!(matches!(err, JjError::NotFound));
     }
 
-    #[test]
-    fn test_is_directory() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_is_directory() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("dir"))
-            .block_on()
+            .await
             .unwrap();
 
-        let err = match commit_tree.read().block_on() {
+        let err = match commit_tree.read().await {
             Err(e) => e,
             Ok(_) => panic!("Expected an error"),
         };
         assert!(matches!(err, JjError::NotAFile));
     }
 
-    #[test]
-    fn test_list_file_not_a_directory() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_list_file_not_a_directory() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("file1.txt"))
-            .block_on()
+            .await
             .unwrap();
 
-        let err = match commit_tree.list().block_on() {
+        let err = match commit_tree.list().await {
             Err(e) => e,
             Ok(_) => panic!("Expected an error"),
         };
         assert!(matches!(err, JjError::NotADirectory));
     }
 
-    #[test]
-    fn test_file_type() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_file_type() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
 
         let commit_tree_dir =
             CommitTreeFile::new(repo.as_ref(), commit_id.clone(), PathBuf::from("dir"))
-                .block_on()
+                .await
                 .unwrap();
-        let type_dir = commit_tree_dir.file_type().block_on().unwrap();
+        let type_dir = commit_tree_dir.file_type().await.unwrap();
         assert!(matches!(type_dir, FileType::Directory));
 
         let commit_tree_file =
             CommitTreeFile::new(repo.as_ref(), commit_id.clone(), PathBuf::from("file1.txt"))
-                .block_on()
+                .await
                 .unwrap();
-        let type_file = commit_tree_file.file_type().block_on().unwrap();
+        let type_file = commit_tree_file.file_type().await.unwrap();
         assert!(matches!(type_file, FileType::File));
 
         let commit_tree_symlink =
             CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("symlink"))
-                .block_on()
+                .await
                 .unwrap();
-        let type_symlink = commit_tree_symlink.file_type().block_on().unwrap();
+        let type_symlink = commit_tree_symlink.file_type().await.unwrap();
         assert!(matches!(type_symlink, FileType::Symlink));
     }
 
-    #[test]
-    fn test_read_symlink_file() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_read_symlink_file() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let commit_tree = CommitTreeFile::new(repo.as_ref(), commit_id, PathBuf::from("symlink"))
-            .block_on()
+            .await
             .unwrap();
 
-        let target = commit_tree.read_link().block_on().unwrap();
+        let target = commit_tree.read_link().await.unwrap();
         assert_eq!(target, PathBuf::from("file1.txt"));
     }
 }

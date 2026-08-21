@@ -73,17 +73,15 @@ impl VirtualFile for CommitsDirectory {
 
 #[cfg(test)]
 mod tests {
-    use pollster::FutureExt as _;
-
     use super::*;
     use crate::test_helpers::setup_test_repo;
 
-    #[test]
-    fn test_repo_commits() {
-        let (_temp_dir, repo, _commit) = setup_test_repo();
+    #[tokio::test]
+    async fn test_repo_commits() {
+        let (_temp_dir, repo, _commit) = setup_test_repo().await;
         let commits_dir = CommitsDirectory::new(repo);
-        let stream = commits_dir.list().block_on().unwrap();
-        let files: Vec<DirectoryEntry> = stream.collect().block_on();
+        let stream = commits_dir.list().await.unwrap();
+        let files: Vec<DirectoryEntry> = stream.collect().await;
 
         // The repository has: root commit + initial workspace commit + our test commit,
         // so 3 in total.

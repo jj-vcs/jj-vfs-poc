@@ -49,52 +49,51 @@ impl PathMapper for AllCommitsPathMapper {
 #[cfg(test)]
 mod tests {
     use jj_lib::object_id::ObjectId;
-    use pollster::FutureExt as _;
 
     use super::*;
     use crate::test_helpers::setup_test_repo;
 
-    #[test]
-    fn test_all_commit_trees_mapper_root() {
-        let (_temp_dir, repo, _commit) = setup_test_repo();
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_root() {
+        let (_temp_dir, repo, _commit) = setup_test_repo().await;
         let mapper = AllCommitsPathMapper { repo };
 
-        let entry = mapper.get_entry(Path::new("")).block_on().unwrap();
-        assert!(entry.list().block_on().is_ok());
+        let entry = mapper.get_entry(Path::new("")).await.unwrap();
+        assert!(entry.list().await.is_ok());
     }
 
-    #[test]
-    fn test_all_commit_trees_mapper_commit_root() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_commit_root() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let mapper = AllCommitsPathMapper { repo };
 
         let commit_hex = commit_id.hex();
         let path = Path::new(&commit_hex);
 
-        let entry = mapper.get_entry(path).block_on().unwrap();
-        assert!(entry.list().block_on().is_ok());
+        let entry = mapper.get_entry(path).await.unwrap();
+        assert!(entry.list().await.is_ok());
     }
 
-    #[test]
-    fn test_all_commit_trees_mapper_commit_subpath() {
-        let (_temp_dir, repo, commit_id) = setup_test_repo();
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_commit_subpath() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
         let mapper = AllCommitsPathMapper { repo };
 
         let commit_hex = commit_id.hex();
         let mut path = PathBuf::from(&commit_hex);
         path.push("file1.txt");
 
-        let entry = mapper.get_entry(&path).block_on().unwrap();
-        assert!(entry.read().block_on().is_ok());
+        let entry = mapper.get_entry(&path).await.unwrap();
+        assert!(entry.read().await.is_ok());
     }
 
-    #[test]
-    fn test_all_commit_trees_mapper_invalid_commit_id() {
-        let (_temp_dir, repo, _commit) = setup_test_repo();
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_invalid_commit_id() {
+        let (_temp_dir, repo, _commit) = setup_test_repo().await;
         let mapper = AllCommitsPathMapper { repo };
 
         let path = Path::new("invalid_commit_hex");
-        let err = match mapper.get_entry(path).block_on() {
+        let err = match mapper.get_entry(path).await {
             Err(e) => e,
             Ok(_) => panic!("Expected NotFound error"),
         };

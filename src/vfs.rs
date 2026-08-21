@@ -81,7 +81,6 @@ mod tests {
     use futures::StreamExt as _;
     use futures::io::Cursor;
     use futures::stream;
-    use pollster::FutureExt;
 
     use super::*;
     use crate::virtual_file::DirectoryEntry;
@@ -217,33 +216,30 @@ mod tests {
         PathMappedVfs::new(mapper)
     }
 
-    #[test]
-    fn test_read_root_file() {
+    #[tokio::test]
+    async fn test_read_root_file() {
         let fs = setup_test_vfs();
-        let content = fs.read(Path::new("file.txt"), 0, 11).block_on().unwrap();
+        let content = fs.read(Path::new("file.txt"), 0, 11).await.unwrap();
         assert_eq!(&*content, b"hello world");
     }
 
-    #[test]
-    fn test_read_nested_file() {
+    #[tokio::test]
+    async fn test_read_nested_file() {
         let fs = setup_test_vfs();
-        let content = fs
-            .read(Path::new("dir/nested.txt"), 0, 14)
-            .block_on()
-            .unwrap();
+        let content = fs.read(Path::new("dir/nested.txt"), 0, 14).await.unwrap();
         assert_eq!(&*content, b"nested content");
     }
 
-    #[test]
-    fn test_list_directory() {
+    #[tokio::test]
+    async fn test_list_directory() {
         let fs = setup_test_vfs();
 
         let entries: Vec<_> = fs
             .read_directory(Path::new("dir"))
-            .block_on()
+            .await
             .unwrap()
             .collect()
-            .block_on();
+            .await;
 
         assert_eq!(entries.len(), 1);
         let entry0 = entries.into_iter().next().unwrap();
@@ -251,31 +247,31 @@ mod tests {
         assert!(matches!(entry0.file_type, FileType::File));
     }
 
-    #[test]
-    fn test_list_directory_not_a_directory() {
+    #[tokio::test]
+    async fn test_list_directory_not_a_directory() {
         let fs = setup_test_vfs();
-        let result = fs.read_directory(Path::new("file.txt")).block_on();
+        let result = fs.read_directory(Path::new("file.txt")).await;
         assert!(matches!(result, Err(JjError::NotADirectory)));
     }
 
-    #[test]
-    fn test_list_directory_not_found() {
+    #[tokio::test]
+    async fn test_list_directory_not_found() {
         let fs = setup_test_vfs();
-        let result = fs.read_directory(Path::new("does_not_exist")).block_on();
+        let result = fs.read_directory(Path::new("does_not_exist")).await;
         assert!(matches!(result, Err(JjError::NotFound)));
     }
 
-    #[test]
-    fn test_read_link() {
+    #[tokio::test]
+    async fn test_read_link() {
         let fs = setup_test_vfs();
-        let target = fs.read_link(Path::new("symlink.txt")).block_on().unwrap();
+        let target = fs.read_link(Path::new("symlink.txt")).await.unwrap();
         assert_eq!(target, PathBuf::from("file.txt"));
     }
 
-    #[test]
-    fn test_read_link_not_a_symlink() {
+    #[tokio::test]
+    async fn test_read_link_not_a_symlink() {
         let fs = setup_test_vfs();
-        let result = fs.read_link(Path::new("file.txt")).block_on();
+        let result = fs.read_link(Path::new("file.txt")).await;
         assert!(matches!(result, Err(JjError::NotASymlink)));
     }
 }
