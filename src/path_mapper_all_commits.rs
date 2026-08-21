@@ -30,6 +30,14 @@ impl AllCommitsPathMapper {
 impl PathMapper for AllCommitsPathMapper {
     #[tracing::instrument(skip(self))]
     async fn get_entry(&self, path: &Path) -> Result<Box<dyn VirtualFile>, JjError> {
+        let repo = self.repo.clone();
+        let repo = tokio::task::spawn_blocking(move || {
+            pollster::block_on(repo.reload_at_head())
+        })
+        .await
+        .map_err(|_| JjError::NotFound)?
+        .map_err(|_| JjError::NotFound)?;
+
         let mut segments = path.iter();
 
         let Some(first) = segments.next() else {
@@ -48,30 +56,30 @@ impl PathMapper for AllCommitsPathMapper {
         match first.to_str().ok_or(JjError::InvalidPath)? {
             "commits" => {
                 let Some(commit_id_str) = segments.next() else {
-                    return Ok(Box::new(CommitsDirectory::new(self.repo.clone())));
+                    return Ok(Box::new(CommitsDirectory::new(repo.clone())));
                 };
                 let commit_id =
                     CommitId::try_from_hex(commit_id_str.to_str().ok_or(JjError::InvalidPath)?)
                         .ok_or(JjError::NotFound)?;
                 Ok(Box::new(
-                    CommitTreeFile::new(&self.repo, commit_id, segments.collect()).await?,
+                    CommitTreeFile::new(&repo, commit_id, segments.collect()).await?,
                 ))
             }
             "workspaces" => {
                 let Some(workspace_name_segment) = segments.next() else {
-                    return Ok(Box::new(WorkspaceDirectory::new(self.repo.clone())));
+                    return Ok(Box::new(WorkspaceDirectory::new(repo.clone())));
                 };
                 let workspace_name_str = workspace_name_segment
                     .to_str()
                     .ok_or(JjError::InvalidPath)?;
-                let wc_commit_ids = self.repo.view().wc_commit_ids();
+                let wc_commit_ids = repo.view().wc_commit_ids();
                 let workspace_name = WorkspaceName::new(workspace_name_str);
                 let commit_id = wc_commit_ids
                     .get(workspace_name)
                     .cloned()
                     .ok_or(JjError::NotFound)?;
                 Ok(Box::new(
-                    CommitTreeFile::new(&self.repo, commit_id, segments.collect()).await?,
+                    CommitTreeFile::new(&repo, commit_id, segments.collect()).await?,
                 ))
             }
             _ => Err(JjError::NotFound),
