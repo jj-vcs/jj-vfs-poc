@@ -20,7 +20,6 @@ use jj_lib::settings::UserSettings;
 use jj_lib::tree_builder::TreeBuilder;
 use jj_lib::workspace::Workspace;
 use jj_lib::workspace::default_working_copy_factories;
-use pollster::FutureExt as _;
 
 pub fn user_settings() -> UserSettings {
     let config_text = r#"
@@ -35,14 +34,14 @@ pub fn user_settings() -> UserSettings {
     UserSettings::from_config(config).unwrap()
 }
 
-pub fn setup_test_repo() -> (tempfile::TempDir, Arc<ReadonlyRepo>, CommitId) {
+pub async fn setup_test_repo() -> (tempfile::TempDir, Arc<ReadonlyRepo>, CommitId) {
     let settings = user_settings();
     let temp_dir = tempfile::tempdir().unwrap();
     let workspace_root = temp_dir.path().to_path_buf();
 
     // Initialize a simple workspace
     let (workspace, repo) = Workspace::init_simple(&settings, &workspace_root)
-        .block_on()
+        .await
         .unwrap();
 
     let store = repo.store().clone();
@@ -58,7 +57,7 @@ pub fn setup_test_repo() -> (tempfile::TempDir, Arc<ReadonlyRepo>, CommitId) {
 
     let file1_id = store
         .write_file(&file1_path, &mut &file1_content[..])
-        .block_on()
+        .await
         .unwrap();
     tree_builder.set(
         file1_path.clone(),
@@ -71,7 +70,7 @@ pub fn setup_test_repo() -> (tempfile::TempDir, Arc<ReadonlyRepo>, CommitId) {
 
     let file2_id = store
         .write_file(&file2_path, &mut &file2_content[..])
-        .block_on()
+        .await
         .unwrap();
     tree_builder.set(
         file2_path.clone(),
@@ -85,11 +84,11 @@ pub fn setup_test_repo() -> (tempfile::TempDir, Arc<ReadonlyRepo>, CommitId) {
     let symlink_path = RepoPathBuf::from_relative_path(Path::new("symlink")).unwrap();
     let symlink_id = store
         .write_symlink(&symlink_path, "file1.txt")
-        .block_on()
+        .await
         .unwrap();
     tree_builder.set(symlink_path, TreeValue::Symlink(symlink_id));
 
-    let tree_id = tree_builder.write_tree().block_on().unwrap();
+    let tree_id = tree_builder.write_tree().await.unwrap();
 
     // Write a commit pointing to this tree
     let signature = Signature {
@@ -111,15 +110,15 @@ pub fn setup_test_repo() -> (tempfile::TempDir, Arc<ReadonlyRepo>, CommitId) {
         committer: signature,
         secure_sig: None,
     };
-    let commit = store.write_commit(commit_data, None).block_on().unwrap();
+    let commit = store.write_commit(commit_data, None).await.unwrap();
 
     // Update the working copy commit ID for the workspace name
     let mut tx = repo.start_transaction();
-    tx.repo_mut().add_head(&commit).block_on().unwrap();
+    tx.repo_mut().add_head(&commit).await.unwrap();
     tx.repo_mut()
         .set_wc_commit(workspace.workspace_name().to_owned(), commit.id().clone())
         .unwrap();
-    let _repo = tx.commit("set working copy").block_on().unwrap();
+    let _repo = tx.commit("set working copy").await.unwrap();
 
     // Load the readonly repo at head
     let loaded_workspace = Workspace::load(
@@ -130,7 +129,7 @@ pub fn setup_test_repo() -> (tempfile::TempDir, Arc<ReadonlyRepo>, CommitId) {
     )
     .unwrap();
     let repo_loader = loaded_workspace.repo_loader();
-    let readonly_repo = repo_loader.load_at_head().block_on().unwrap();
+    let readonly_repo = repo_loader.load_at_head().await.unwrap();
 
     (temp_dir, readonly_repo, commit.id().clone())
 }
