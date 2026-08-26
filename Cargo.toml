@@ -10,6 +10,7 @@ fuser = "0.18.0"
 futures = "0.3.33"
 itertools = "0.15.0"
 jj-lib = "0.43.0"
+cc-lib = { git = "https://github.com/jj-vcs/jj-commit-cloud-poc", branch = "srachaba-rpc" }
 libc = "0.2.189"
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "signal", "macros", "time"] }
