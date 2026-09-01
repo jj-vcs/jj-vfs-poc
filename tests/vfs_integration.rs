@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use jj_lib::object_id::ObjectId as _;
+use jjfsd::inode_map::ROOT_INODE;
 use jjfsd::path_mapper_all_commits::AllCommitsPathMapper;
 // TODO: For simplicity in this PoC, we compile test_helpers directly using a
 // path attribute. A cleaner, long-term solution would be to define a
@@ -23,67 +24,57 @@ async fn test_vfs_read_real_repo_files() {
     let mapper = AllCommitsPathMapper::new(repo);
     let fs = PathMappedVfs::new(mapper);
 
-    // 3. Look up the commit directory (the commit hex is the first level of
-    //    components in the path mapper)
-    let commit_dir = format!("commits/{}", commit_id.hex());
+    // 3. Look up "commits" under root, then the commit directory under
+    //    "commits"
+    let commits_ino = fs.get_ino(ROOT_INODE, "commits").await.unwrap();
+    let commits_dir_attr = fs.get_attributes(commits_ino).await.unwrap();
+    assert!(matches!(commits_dir_attr.file_type, FileType::Directory));
 
-    // In JjVfsState, looking up a child of root (parent = 1) is done by name:
-    let commit_dir_attr = fs
-        .get_attributes(Path::new(&commit_dir))
-        .await
-        .expect("Failed to lookup commit directory");
-
-    // Verify it is indeed a directory (kind = Directory)
+    let commit_hex = commit_id.hex();
+    let commit_ino = fs.get_ino(commits_ino, &commit_hex).await.unwrap();
+    let commit_dir_attr = fs.get_attributes(commit_ino).await.unwrap();
     assert!(matches!(commit_dir_attr.file_type, FileType::Directory));
 
     // 4. Look up "file1.txt" inside the commit directory
-    let file1_attr = fs
-        .get_attributes(Path::new(&format!("{}/file1.txt", commit_dir)))
-        .await
-        .expect("Failed to lookup file1.txt");
+    let file1_ino = fs.get_ino(commit_ino, "file1.txt").await.unwrap();
+    let file1_attr = fs.get_attributes(file1_ino).await.unwrap();
     assert!(matches!(file1_attr.file_type, FileType::File));
     assert_eq!(file1_attr.size, 15); // "hello content 1" is 15 bytes
 
     // 5. Read the content of "file1.txt"
     let content = fs
-        .read(Path::new(&format!("{}/file1.txt", commit_dir)), 0, 15)
+        .read(file1_ino, 0, 15)
         .await
         .expect("Failed to read file1.txt");
     assert_eq!(&*content, b"hello content 1");
 
     // 6. Look up "dir" inside the commit directory
-    let dir_attr = fs
-        .get_attributes(Path::new(&format!("{}/dir", commit_dir)))
-        .await
-        .expect("Failed to lookup dir");
+    let dir_ino = fs.get_ino(commit_ino, "dir").await.unwrap();
+    let dir_attr = fs.get_attributes(dir_ino).await.unwrap();
     assert!(matches!(dir_attr.file_type, FileType::Directory));
 
     // 7. Look up "file2.txt" inside "dir"
-    let file2_attr = fs
-        .get_attributes(Path::new(&format!("{}/dir/file2.txt", commit_dir)))
-        .await
-        .expect("Failed to lookup file2.txt");
+    let file2_ino = fs.get_ino(dir_ino, "file2.txt").await.unwrap();
+    let file2_attr = fs.get_attributes(file2_ino).await.unwrap();
     assert!(matches!(file2_attr.file_type, FileType::File));
     assert_eq!(file2_attr.size, 15); // "hello content 2" is 15 bytes
 
     // 8. Read the content of "file2.txt"
     let content2 = fs
-        .read(Path::new(&format!("{}/dir/file2.txt", commit_dir)), 0, 15)
+        .read(file2_ino, 0, 15)
         .await
         .expect("Failed to read file2.txt");
     assert_eq!(&*content2, b"hello content 2");
 
     // 9. Look up "symlink" inside the commit directory
-    let symlink_attr = fs
-        .get_attributes(Path::new(&format!("{}/symlink", commit_dir)))
-        .await
-        .expect("Failed to lookup symlink");
+    let symlink_ino = fs.get_ino(commit_ino, "symlink").await.unwrap();
+    let symlink_attr = fs.get_attributes(symlink_ino).await.unwrap();
     assert!(matches!(symlink_attr.file_type, FileType::Symlink));
     assert_eq!(symlink_attr.size, 9); // "file1.txt" is 9 bytes
 
     // 10. Read the target of the symlink
     let target = fs
-        .read_link(Path::new(&format!("{}/symlink", commit_dir)))
+        .read_link(symlink_ino)
         .await
         .expect("Failed to read symlink");
     assert_eq!(target, Path::new("file1.txt").to_path_buf());

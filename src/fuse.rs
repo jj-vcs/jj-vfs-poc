@@ -6,67 +6,25 @@ use std::time::SystemTime;
 
 use fuser::*;
 use futures::StreamExt as _;
-use futures::stream;
 
-use crate::inode_map::InodeMap;
 use crate::jj_error::JjError;
 use crate::vfs::VirtualFilesystem;
 use crate::virtual_file::FileAttributes;
 
 const TTL: Duration = Duration::from_secs(1);
 
-macro_rules! reply_async {
-    (
-        $self:ident,
-        $reply:ident,
-        $ino:expr,
-        $path:ident => $async_body:expr,
-        $value:pat => $success_body:expr
-    ) => {
-        let inode_map = $self.inode_map.clone();
-        let rt_handle = $self.rt_handle.clone();
-        let ino = $ino;
-        rt_handle.spawn(async move {
-            match inode_map.get_path(ino) {
-                Ok(mut path_buf) => {
-                    let $path = &mut path_buf;
-                    let res: Result<_, JjError> = $async_body.await;
-                    match res {
-                        Ok($value) => {
-                            $success_body
-                        }
-                        Err(err) => {
-                            tracing::debug!(path = %format_args!("./{}", path_buf.display()), error = %err, "FUSE operation failed");
-                            $reply.error(err.into());
-                        }
-                    }
-                }
-                Err(err) => {
-                    tracing::error!(ino = %ino, error = %err, "Failed to resolve path for inode");
-                    $reply.error(err.into());
-                }
-            }
-        });
-    };
-}
-
 pub struct JjFuse<FS: VirtualFilesystem> {
     fs: Arc<FS>,
-    inode_map: Arc<InodeMap>,
     rt_handle: tokio::runtime::Handle,
 }
 
 impl<FS: VirtualFilesystem> JjFuse<FS> {
     pub fn new(fs: Arc<FS>, rt_handle: tokio::runtime::Handle) -> Self {
-        Self {
-            fs,
-            inode_map: Arc::new(InodeMap::new()),
-            rt_handle,
-        }
+        Self { fs, rt_handle }
     }
 }
 
-impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
+impl<FS: VirtualFilesystem + 'static> Filesystem for JjFuse<FS> {
     #[tracing::instrument(level = "debug", skip_all)]
     fn init(&mut self, _req: &Request, config: &mut KernelConfig) -> std::io::Result<()> {
         let _ = config.add_capabilities(
@@ -78,33 +36,32 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let fs = self.fs.clone();
-        let inode_map = self.inode_map.clone();
         let name = name.to_os_string();
-        reply_async!(
-            self,
-            reply,
-            parent,
-            parent_path => async move {
+        self.rt_handle.spawn(async move {
+            let res: Result<_, JjError> = async {
                 let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
-                let child_ino = inode_map.get_ino(parent, name_str)?;
-                parent_path.push(name_str);
-                let attr = fs.get_attributes(parent_path).await?;
-                Ok(attr.to_fuse(child_ino))
-            },
-            attr => reply.entry(&TTL, &attr, fuser::Generation(0))
-        );
+                let child_ino = fs.get_ino(parent.0, name_str).await?;
+                let attr = fs.get_attributes(child_ino).await?;
+                Ok(attr.to_fuse(INodeNo(child_ino)))
+            }
+            .await;
+
+            match res {
+                Ok(attr) => reply.entry(&TTL, &attr, fuser::Generation(0)),
+                Err(err) => reply.error(err.into()),
+            }
+        });
     }
 
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         let fs = self.fs.clone();
-        reply_async!(
-            self,
-            reply,
-            ino,
-            path => async { Ok(fs.get_attributes(path).await?.to_fuse(ino)) },
-            attr => reply.attr(&TTL, &attr)
-        );
+        self.rt_handle.spawn(async move {
+            match fs.get_attributes(ino.0).await {
+                Ok(attr) => reply.attr(&TTL, &attr.to_fuse(ino)),
+                Err(err) => reply.error(err.into()),
+            }
+        });
     }
 
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
@@ -120,13 +77,12 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         reply: ReplyData,
     ) {
         let fs = self.fs.clone();
-        reply_async!(
-            self,
-            reply,
-            ino,
-            path => async { fs.read(path, offset, size).await },
-            content => reply.data(&content)
-        );
+        self.rt_handle.spawn(async move {
+            match fs.read(ino.0, offset, size).await {
+                Ok(content) => reply.data(&content),
+                Err(err) => reply.error(err.into()),
+            }
+        });
     }
 
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
@@ -139,54 +95,46 @@ impl<FS: VirtualFilesystem + Send + Sync + 'static> Filesystem for JjFuse<FS> {
         mut reply: ReplyDirectory,
     ) {
         let fs = self.fs.clone();
-        let inode_map = self.inode_map.clone();
-        reply_async!(
-            self,
-            reply,
-            ino,
-            path => async {
-                if offset < 1 && reply.add(ino, 1, FileType::Directory, ".") {
-                    return Ok(());
+        self.rt_handle.spawn(async move {
+            let mut stream = match fs.read_directory(ino.0, offset).await {
+                Ok(stream) => stream,
+                Err(err) => {
+                    reply.error(err.into());
+                    return;
                 }
+            };
 
-                if offset < 2 {
-                    let parent_ino = inode_map.get_parent_ino(ino)?;
-                    if reply.add(parent_ino, 2, FileType::Directory, "..") {
-                        return Ok(());
+            while let Some(entry_res) = stream.next().await {
+                match entry_res {
+                    Ok(entry) => {
+                        if reply.add(
+                            INodeNo(entry.ino),
+                            entry.offset,
+                            entry.file_type.into(),
+                            &entry.name,
+                        ) {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        reply.error(err.into());
+                        return;
                     }
                 }
-
-                let skip = offset.saturating_sub(2) as usize;
-                let entries = fs.read_directory(path).await?;
-                let mut stream = stream::iter(3..).zip(entries).skip(skip);
-                while let Some((index, entry)) = stream.next().await {
-                    let name = entry.name.as_str();
-                    let file_type = entry.file_type.into();
-                    let child_ino = inode_map.get_ino(ino, name)?;
-                    if reply.add(child_ino, index, file_type, name) {
-                        break;
-                    }
-                }
-                Ok(())
-            },
-            () => reply.ok()
-        );
+            }
+            reply.ok();
+        });
     }
 
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
         let fs = self.fs.clone();
-        reply_async!(
-            self,
-            reply,
-            ino,
-            path => async move {
-                let target = fs.read_link(path).await?;
-                let bytes = target.as_os_str().as_bytes().to_vec();
-                Ok(bytes)
-            },
-            target => reply.data(&target)
-        );
+        self.rt_handle.spawn(async move {
+            match fs.read_link(ino.0).await {
+                Ok(target) => reply.data(target.as_os_str().as_bytes()),
+                Err(err) => reply.error(err.into()),
+            }
+        });
     }
 }
 
