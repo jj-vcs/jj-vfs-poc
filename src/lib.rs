@@ -10,3 +10,4 @@ pub mod static_directory;
 pub mod test_helpers;
 pub mod vfs;
 pub mod virtual_file;
+pub mod workspaces_directory;

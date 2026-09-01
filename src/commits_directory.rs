@@ -6,7 +6,7 @@ use futures::StreamExt as _;
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::ReadonlyRepo;
 
-use crate::jj_error::JjError;
+use crate::jj_error::JjResult;
 use crate::virtual_file::DirectoryEntry;
 use crate::virtual_file::DirectoryStream;
 use crate::virtual_file::FileAttributes;
@@ -28,7 +28,7 @@ impl CommitsDirectory {
 #[async_trait]
 impl VirtualFile for CommitsDirectory {
     #[tracing::instrument(skip(self))]
-    async fn list(&self) -> Result<DirectoryStream, JjError> {
+    async fn list(&self) -> JjResult<DirectoryStream> {
         let expression = jj_lib::revset::ResolvedRevsetExpression::all();
         let revset = expression
             .evaluate(self.repo.as_ref())
@@ -52,7 +52,7 @@ impl VirtualFile for CommitsDirectory {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn attributes(&self) -> Result<FileAttributes, JjError> {
+    async fn attributes(&self) -> JjResult<FileAttributes> {
         Ok(FileAttributes {
             size: 0,
             file_type: FileType::Directory,
@@ -61,7 +61,7 @@ impl VirtualFile for CommitsDirectory {
         })
     }
 
-    async fn file_type(&self) -> Result<FileType, JjError> {
+    async fn file_type(&self) -> JjResult<FileType> {
         Ok(FileType::Directory)
     }
 }

@@ -23,3 +23,5 @@ pub enum JjError {
     #[error("Underlying jj-lib error: {0}")]
     JjLibBackendError(#[from] jj_lib::backend::BackendError),
 }
+
+pub type JjResult<T> = Result<T, JjError>;

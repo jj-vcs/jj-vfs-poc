@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 use ustr::Ustr;
 
 use crate::jj_error::JjError;
+use crate::jj_error::JjResult;
 
 pub type Inode = u64;
 pub const ROOT_INODE: Inode = 1;
@@ -41,7 +42,7 @@ impl InodeMap {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_path(&self, mut ino: Inode) -> Result<PathBuf, JjError> {
+    pub fn get_path(&self, mut ino: Inode) -> JjResult<PathBuf> {
         let inodes = self.inodes.lock().unwrap();
         let mut components = Vec::with_capacity(8);
         while ino != ROOT_INODE {
@@ -56,7 +57,7 @@ impl InodeMap {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_parent_ino(&self, ino: Inode) -> Result<Inode, JjError> {
+    pub fn get_parent_ino(&self, ino: Inode) -> JjResult<Inode> {
         Ok(self
             .inodes
             .lock()
@@ -67,7 +68,7 @@ impl InodeMap {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_ino(&self, parent: Inode, name: &str) -> Result<Inode, JjError> {
+    pub fn get_ino(&self, parent: Inode, name: &str) -> JjResult<Inode> {
         let name = Ustr::from(name);
         let mut inodes = self.inodes.lock().unwrap();
         let children = &mut inodes.get_mut(&parent).ok_or(JjError::NotFound)?.children;

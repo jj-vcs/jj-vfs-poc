@@ -8,6 +8,7 @@ use fuser::*;
 use futures::StreamExt as _;
 
 use crate::jj_error::JjError;
+use crate::jj_error::JjResult;
 use crate::vfs::VirtualFilesystem;
 use crate::virtual_file::FileAttributes;
 
@@ -38,7 +39,7 @@ impl<FS: VirtualFilesystem + 'static> Filesystem for JjFuse<FS> {
         let fs = self.fs.clone();
         let name = name.to_os_string();
         self.rt_handle.spawn(async move {
-            let res: Result<_, JjError> = async {
+            let res: JjResult<_> = async {
                 let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
                 let child_ino = fs.get_ino(parent.0, name_str).await?;
                 let attr = fs.get_attributes(child_ino).await?;
