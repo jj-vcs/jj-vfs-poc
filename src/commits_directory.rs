@@ -39,9 +39,10 @@ impl VirtualFile for CommitsDirectory {
         let revset = expression
             .evaluate(self.repo.as_ref())
             .map_err(|e| e.into_backend_error())?;
-        // Revset does not implement Send, meaning it cannot be sent across threads. We
-        // use blocking for now since this will be rewritten in the future anyways (to a
-        // version that doesn't list all commits)
+        // Revset does not implement Send, meaning it cannot be sent across
+        // threads. We use blocking for now since this will be rewritten
+        // in the future anyways (to a version that doesn't list all
+        // commits)
         let commits: Vec<DirectoryEntry> = futures::executor::block_on(async {
             revset
                 .stream()
@@ -83,8 +84,8 @@ mod tests {
         let stream = commits_dir.list().await.unwrap();
         let files: Vec<DirectoryEntry> = stream.collect().await;
 
-        // The repository has: root commit + initial workspace commit + our test commit,
-        // so 3 in total.
+        // The repository has: root commit + initial workspace commit + our test
+        // commit, so 3 in total.
         assert_eq!(files.len(), 3);
 
         for file in &files {
