@@ -132,8 +132,9 @@ impl VirtualFile for CommitTreeFile {
             FileType::File => {
                 let mut reader = self.read().await?;
 
-                // TODO: we should be able to get the file size without having to read the
-                // entire file (requires changes in jj-lib).
+                // TODO: we should be able to get the file size without having
+                // to read the entire file (requires changes in
+                // jj-lib).
                 futures::io::copy(&mut reader, &mut futures::io::sink()).await?
             }
             FileType::Directory => 0,
