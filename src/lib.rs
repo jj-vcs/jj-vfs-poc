@@ -1,3 +1,4 @@
+pub mod bookmarks_directory;
 pub mod commit_tree_file;
 pub mod commits_directory;
 pub mod fuse;

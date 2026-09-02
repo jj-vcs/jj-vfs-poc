@@ -85,6 +85,14 @@ async fn test_vfs_mount() {
     // 1. Set up a real test jj repository with commits and files
     let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
 
+    // Create a local bookmark pointing to the commit
+    let mut tx = repo.start_transaction();
+    tx.repo_mut().set_local_bookmark_target(
+        jj_lib::ref_name::RefName::new("main"),
+        jj_lib::op_store::RefTarget::normal(commit_id.clone()),
+    );
+    let repo = tx.commit("set main bookmark").await.unwrap();
+
     // 2. Initialize the mapper and JjVfsState
     let mapper = AllCommitsPathMapper::new(repo);
     let fs = PathMappedVfs::new(mapper);
@@ -169,6 +177,23 @@ async fn test_vfs_mount() {
     let content_via_mutable = std::fs::read_to_string(mutable_commit_symlink.join("file1.txt"))
         .expect("Failed to read file1.txt via mutable_commits");
     assert_eq!(content_via_mutable, "hello content 1");
+
+    // Check bookmarks symlink and reading a file through it
+    let bookmark_symlink = mountpoint.join("bookmarks").join("main");
+    assert!(bookmark_symlink.exists());
+    let bookmark_symlink_meta = std::fs::symlink_metadata(&bookmark_symlink)
+        .expect("Failed to get bookmark symlink metadata");
+    assert!(bookmark_symlink_meta.file_type().is_symlink());
+    let bookmark_symlink_target =
+        std::fs::read_link(&bookmark_symlink).expect("Failed to read bookmark symlink");
+    assert_eq!(
+        bookmark_symlink_target,
+        Path::new("../commits").join(&commit_hex)
+    );
+
+    let content_via_bookmark = std::fs::read_to_string(bookmark_symlink.join("file1.txt"))
+        .expect("Failed to read file1.txt via bookmark");
+    assert_eq!(content_via_bookmark, "hello content 1");
 
     // Explicitly unmount/drop session
     drop(session);

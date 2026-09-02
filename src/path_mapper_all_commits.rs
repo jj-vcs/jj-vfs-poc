@@ -7,6 +7,7 @@ use jj_lib::backend::CommitId;
 use jj_lib::ref_name::WorkspaceName;
 use jj_lib::repo::ReadonlyRepo;
 
+use crate::bookmarks_directory::BookmarksDirectory;
 use crate::commit_tree_file::CommitTreeFile;
 use crate::commits_directory::CommitsDirectory;
 use crate::jj_error::JjError;
@@ -43,6 +44,10 @@ impl PathMapper for AllCommitsPathMapper {
 
         let Some(first) = segments.next() else {
             return Ok(Box::new(StaticDirectory::new(vec![
+                DirectoryEntry {
+                    name: "bookmarks".to_string(),
+                    file_type: FileType::Directory,
+                },
                 DirectoryEntry {
                     name: "commits".to_string(),
                     file_type: FileType::Directory,
@@ -101,6 +106,19 @@ impl PathMapper for AllCommitsPathMapper {
                         .ok_or(JjError::NotFound)?;
                 mutable_dir.get_symlink(&commit_id)
             }
+            "bookmarks" => {
+                let bookmarks_dir =
+                    BookmarksDirectory::new(repo.clone(), PathBuf::from("../commits"));
+                let Some(bookmark_name_segment) = segments.next() else {
+                    return Ok(Box::new(bookmarks_dir));
+                };
+                if segments.next().is_some() {
+                    return Err(JjError::NotFound);
+                }
+                let bookmark_name_str =
+                    bookmark_name_segment.to_str().ok_or(JjError::InvalidPath)?;
+                bookmarks_dir.get_symlink(bookmark_name_str)
+            }
             _ => Err(JjError::NotFound),
         }
     }
@@ -124,7 +142,10 @@ mod tests {
         let list = entry.list().await.unwrap();
         let mut entries: Vec<String> = list.map(|e| e.name).collect().await;
         entries.sort();
-        assert_eq!(entries, vec!["commits", "mutable_commits", "workspaces"]);
+        assert_eq!(
+            entries,
+            vec!["bookmarks", "commits", "mutable_commits", "workspaces"]
+        );
     }
 
     #[tokio::test]
@@ -260,5 +281,64 @@ mod tests {
             Ok(_) => panic!("Expected NotFound for immutable commit"),
         };
         assert!(matches!(err, JjError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_bookmarks_root() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
+
+        let mut tx = repo.start_transaction();
+        tx.repo_mut().set_local_bookmark_target(
+            jj_lib::ref_name::RefName::new("main"),
+            jj_lib::op_store::RefTarget::normal(commit_id),
+        );
+        let repo = tx.commit("set bookmark").await.unwrap();
+        let mapper = AllCommitsPathMapper { repo };
+
+        let entry = mapper.get_entry(Path::new("bookmarks")).await.unwrap();
+        let list = entry.list().await.unwrap();
+        let entries: Vec<DirectoryEntry> = list.collect().await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "main");
+        assert!(matches!(entries[0].file_type, FileType::Symlink));
+    }
+
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_bookmark_entry() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
+
+        let commit_hex = commit_id.hex();
+        let mut tx = repo.start_transaction();
+        tx.repo_mut().set_local_bookmark_target(
+            jj_lib::ref_name::RefName::new("feature-1"),
+            jj_lib::op_store::RefTarget::normal(commit_id),
+        );
+        let repo = tx.commit("set bookmark").await.unwrap();
+        let mapper = AllCommitsPathMapper { repo };
+
+        let path = Path::new("bookmarks").join("feature-1");
+        let entry = mapper.get_entry(&path).await.unwrap();
+        assert!(matches!(
+            entry.file_type().await.unwrap(),
+            FileType::Symlink
+        ));
+        assert_eq!(
+            entry.read_link().await.unwrap(),
+            PathBuf::from("../commits").join(&commit_hex)
+        );
+
+        let subpath = path.join("file1.txt");
+        let err = mapper.get_entry(&subpath).await;
+        assert!(matches!(err, Err(JjError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_bookmark_nonexistent() {
+        let (_temp_dir, repo, _commit) = setup_test_repo().await;
+        let mapper = AllCommitsPathMapper { repo };
+
+        let path = Path::new("bookmarks").join("nonexistent");
+        let err = mapper.get_entry(&path).await;
+        assert!(matches!(err, Err(JjError::NotFound)));
     }
 }
