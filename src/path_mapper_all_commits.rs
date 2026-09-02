@@ -4,21 +4,22 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use jj_lib::backend::CommitId;
-use jj_lib::ref_name::WorkspaceName;
+use jj_lib::ref_name::WorkspaceNameBuf;
 use jj_lib::repo::ReadonlyRepo;
 
 use crate::bookmarks_directory::BookmarksDirectory;
-use crate::commit_tree_file::CommitTreeFile;
 use crate::commits_directory::CommitsDirectory;
 use crate::jj_error::JjError;
 use crate::jj_error::JjResult;
 use crate::mutable_commits_directory::MutableCommitsDirectory;
 use crate::path_mapper::PathMapper;
+use crate::readonly_commit_tree_file::ReadonlyCommitTreeFile;
 use crate::static_directory::StaticDirectory;
 use crate::virtual_file::DirectoryEntry;
 use crate::virtual_file::FileType;
 use crate::virtual_file::VirtualFile;
 use crate::workspaces_directory::WorkspacesDirectory;
+use crate::writable_commit_tree_file::WritableCommitTreeFile;
 
 pub struct AllCommitsPathMapper {
     repo: Arc<ReadonlyRepo>,
@@ -72,7 +73,7 @@ impl PathMapper for AllCommitsPathMapper {
                     CommitId::try_from_hex(commit_id_str.to_str().ok_or(JjError::InvalidPath)?)
                         .ok_or(JjError::NotFound)?;
                 Ok(Box::new(
-                    CommitTreeFile::new(&repo, commit_id, segments.collect()).await?,
+                    ReadonlyCommitTreeFile::new(&repo, commit_id, segments.collect()).await?,
                 ))
             }
             "workspaces" => {
@@ -82,15 +83,12 @@ impl PathMapper for AllCommitsPathMapper {
                 let workspace_name_str = workspace_name_segment
                     .to_str()
                     .ok_or(JjError::InvalidPath)?;
-                let wc_commit_ids = repo.view().wc_commit_ids();
-                let workspace_name = WorkspaceName::new(workspace_name_str);
-                let commit_id = wc_commit_ids
-                    .get(workspace_name)
-                    .cloned()
-                    .ok_or(JjError::NotFound)?;
-                Ok(Box::new(
-                    CommitTreeFile::new(&repo, commit_id, segments.collect()).await?,
-                ))
+                let workspace_name = WorkspaceNameBuf::from(workspace_name_str);
+                Ok(Box::new(WritableCommitTreeFile::new(
+                    repo.clone(),
+                    workspace_name,
+                    segments.collect(),
+                )))
             }
             "mutable_commits" => {
                 let mutable_dir =
