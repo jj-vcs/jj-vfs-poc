@@ -153,6 +153,23 @@ async fn test_vfs_mount() {
     let symlink_target = std::fs::read_link(&symlink_path).expect("Failed to read symlink");
     assert_eq!(symlink_target, Path::new("file1.txt").to_path_buf());
 
+    // Check mutable_commits symlink and reading a file through it
+    let mutable_commit_symlink = mountpoint.join("mutable_commits").join(&commit_hex);
+    assert!(mutable_commit_symlink.exists());
+    let mut_symlink_meta = std::fs::symlink_metadata(&mutable_commit_symlink)
+        .expect("Failed to get mutable commit symlink metadata");
+    assert!(mut_symlink_meta.file_type().is_symlink());
+    let mut_symlink_target =
+        std::fs::read_link(&mutable_commit_symlink).expect("Failed to read mutable commit symlink");
+    assert_eq!(
+        mut_symlink_target,
+        Path::new("../commits").join(&commit_hex)
+    );
+
+    let content_via_mutable = std::fs::read_to_string(mutable_commit_symlink.join("file1.txt"))
+        .expect("Failed to read file1.txt via mutable_commits");
+    assert_eq!(content_via_mutable, "hello content 1");
+
     // Explicitly unmount/drop session
     drop(session);
 }

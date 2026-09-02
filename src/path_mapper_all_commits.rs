@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -10,6 +11,7 @@ use crate::commit_tree_file::CommitTreeFile;
 use crate::commits_directory::CommitsDirectory;
 use crate::jj_error::JjError;
 use crate::jj_error::JjResult;
+use crate::mutable_commits_directory::MutableCommitsDirectory;
 use crate::path_mapper::PathMapper;
 use crate::static_directory::StaticDirectory;
 use crate::virtual_file::DirectoryEntry;
@@ -43,6 +45,10 @@ impl PathMapper for AllCommitsPathMapper {
             return Ok(Box::new(StaticDirectory::new(vec![
                 DirectoryEntry {
                     name: "commits".to_string(),
+                    file_type: FileType::Directory,
+                },
+                DirectoryEntry {
+                    name: "mutable_commits".to_string(),
                     file_type: FileType::Directory,
                 },
                 DirectoryEntry {
@@ -81,6 +87,20 @@ impl PathMapper for AllCommitsPathMapper {
                     CommitTreeFile::new(&repo, commit_id, segments.collect()).await?,
                 ))
             }
+            "mutable_commits" => {
+                let mutable_dir =
+                    MutableCommitsDirectory::new(repo.clone(), PathBuf::from("../commits"));
+                let Some(commit_id_str) = segments.next() else {
+                    return Ok(Box::new(mutable_dir));
+                };
+                if segments.next().is_some() {
+                    return Err(JjError::NotFound);
+                }
+                let commit_id =
+                    CommitId::try_from_hex(commit_id_str.to_str().ok_or(JjError::InvalidPath)?)
+                        .ok_or(JjError::NotFound)?;
+                mutable_dir.get_symlink(&commit_id)
+            }
             _ => Err(JjError::NotFound),
         }
     }
@@ -90,6 +110,7 @@ impl PathMapper for AllCommitsPathMapper {
 mod tests {
     use futures::StreamExt as _;
     use jj_lib::object_id::ObjectId;
+    use jj_lib::repo::Repo as _;
 
     use super::*;
     use crate::test_helpers::setup_test_repo;
@@ -100,7 +121,10 @@ mod tests {
         let mapper = AllCommitsPathMapper { repo };
 
         let entry = mapper.get_entry(Path::new("")).await.unwrap();
-        assert!(entry.list().await.is_ok());
+        let list = entry.list().await.unwrap();
+        let mut entries: Vec<String> = list.map(|e| e.name).collect().await;
+        entries.sort();
+        assert_eq!(entries, vec!["commits", "mutable_commits", "workspaces"]);
     }
 
     #[tokio::test]
@@ -161,7 +185,6 @@ mod tests {
         let entry = mapper.get_entry(&path).await.unwrap();
         assert!(entry.read().await.is_ok());
     }
-
     #[tokio::test]
     async fn test_all_commit_trees_mapper_non_existent_workspace() {
         let (_temp_dir, repo, _commit) = setup_test_repo().await;
@@ -180,6 +203,61 @@ mod tests {
         let err = match mapper.get_entry(&path).await {
             Err(e) => e,
             Ok(_) => panic!("Expected NotFound error"),
+        };
+        assert!(matches!(err, JjError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_mutable_commits_root() {
+        let (_temp_dir, repo, _commit) = setup_test_repo().await;
+        let mapper = AllCommitsPathMapper { repo };
+
+        let entry = mapper
+            .get_entry(Path::new("mutable_commits"))
+            .await
+            .unwrap();
+        let list = entry.list().await.unwrap();
+        let entries: Vec<DirectoryEntry> = list.collect().await;
+        assert_eq!(entries.len(), 2);
+        for e in entries {
+            assert!(matches!(e.file_type, FileType::Symlink));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_mutable_commit_entry() {
+        let (_temp_dir, repo, commit_id) = setup_test_repo().await;
+        let mapper = AllCommitsPathMapper { repo };
+
+        let commit_hex = commit_id.hex();
+        let path = Path::new("mutable_commits").join(&commit_hex);
+        let entry = mapper.get_entry(&path).await.unwrap();
+        assert!(matches!(
+            entry.file_type().await.unwrap(),
+            FileType::Symlink
+        ));
+        assert_eq!(
+            entry.read_link().await.unwrap(),
+            PathBuf::from("../commits").join(&commit_hex)
+        );
+
+        let file_path = Path::new("mutable_commits")
+            .join(&commit_hex)
+            .join("file1.txt");
+        let file_entry_res = mapper.get_entry(&file_path).await;
+        assert!(matches!(file_entry_res, Err(JjError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_all_commit_trees_mapper_mutable_commits_immutable_not_found() {
+        let (_temp_dir, repo, _commit) = setup_test_repo().await;
+        let mapper = AllCommitsPathMapper { repo: repo.clone() };
+
+        let root_hex = repo.store().root_commit_id().hex();
+        let path = Path::new("mutable_commits").join(&root_hex);
+        let err = match mapper.get_entry(&path).await {
+            Err(e) => e,
+            Ok(_) => panic!("Expected NotFound for immutable commit"),
         };
         assert!(matches!(err, JjError::NotFound));
     }
