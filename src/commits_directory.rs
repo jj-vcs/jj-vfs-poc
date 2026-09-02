@@ -1,9 +1,7 @@
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
-use futures::AsyncRead;
 use futures::StreamExt as _;
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::ReadonlyRepo;
@@ -29,10 +27,6 @@ impl CommitsDirectory {
 
 #[async_trait]
 impl VirtualFile for CommitsDirectory {
-    async fn read(&self) -> Result<Pin<Box<dyn AsyncRead + Send>>, JjError> {
-        Err(JjError::NotAFile)
-    }
-
     #[tracing::instrument(skip(self))]
     async fn list(&self) -> Result<DirectoryStream, JjError> {
         let expression = jj_lib::revset::ResolvedRevsetExpression::all();
