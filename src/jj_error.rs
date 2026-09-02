@@ -17,6 +17,9 @@ pub enum JjError {
     #[error("Expected a symlink")]
     NotASymlink,
 
+    #[error("Read-only filesystem")]
+    Readonly,
+
     #[error("{0}")]
     IO(#[from] std::io::Error),
 

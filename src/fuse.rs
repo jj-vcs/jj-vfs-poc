@@ -184,6 +184,7 @@ impl From<JjError> for Errno {
             JjError::NotADirectory => Errno::ENOTDIR,
             JjError::NotAFile => Errno::EISDIR,
             JjError::NotASymlink => Errno::EINVAL,
+            JjError::Readonly => Errno::EROFS,
             _ => Errno::EIO,
         }
     }

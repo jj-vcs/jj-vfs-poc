@@ -27,7 +27,7 @@ fn main() {
 
     let mut config = fuser::Config::default();
     config.mount_options = vec![
-        fuser::MountOption::RO,
+        fuser::MountOption::RW,
         fuser::MountOption::FSName("jjfs".to_string()),
     ];
 

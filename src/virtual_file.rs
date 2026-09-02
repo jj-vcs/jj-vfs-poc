@@ -31,6 +31,33 @@ pub struct DirectoryEntry {
 
 pub type DirectoryStream = BoxStream<'static, DirectoryEntry>;
 
+#[derive(Debug, Clone)]
+pub enum CreateFile {
+    File { name: String, executable: bool },
+    Directory { name: String },
+    Symlink { name: String, target: String },
+}
+
+impl CreateFile {
+    pub fn name(&self) -> &str {
+        match self {
+            CreateFile::File { name, .. } => name,
+            CreateFile::Directory { name } => name,
+            CreateFile::Symlink { name, .. } => name,
+        }
+    }
+}
+
+impl From<CreateFile> for FileType {
+    fn from(value: CreateFile) -> Self {
+        match value {
+            CreateFile::File { .. } => FileType::File,
+            CreateFile::Directory { .. } => FileType::Directory,
+            CreateFile::Symlink { .. } => FileType::Symlink,
+        }
+    }
+}
+
 /// This trait represents a file in our virtual file system. This can either be
 /// a normal file you can read from or for example a directory, in which case
 /// you can list its contents.
@@ -55,4 +82,16 @@ pub trait VirtualFile: Send + Sync {
 
     async fn attributes(&self) -> JjResult<FileAttributes>;
     async fn file_type(&self) -> JjResult<FileType>;
+
+    async fn create(&self, _file: CreateFile) -> JjResult<FileAttributes> {
+        Err(JjError::Readonly)
+    }
+
+    async fn write(&self, _offset: u64, _data: &[u8]) -> JjResult<u32> {
+        Err(JjError::Readonly)
+    }
+
+    async fn delete(&self) -> JjResult<()> {
+        Err(JjError::Readonly)
+    }
 }
