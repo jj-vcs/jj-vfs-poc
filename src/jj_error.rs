@@ -20,6 +20,9 @@ pub enum JjError {
     #[error("Read-only filesystem")]
     Readonly,
 
+    #[error("Operation not supported")]
+    OperationNotSupported,
+
     #[error("{0}")]
     IO(#[from] std::io::Error),
 

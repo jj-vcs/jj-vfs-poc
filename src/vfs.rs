@@ -13,6 +13,7 @@ use crate::inode_map::Inode;
 use crate::inode_map::InodeMap;
 use crate::jj_error::JjError;
 use crate::path_mapper::PathMapper;
+use crate::virtual_file::CreateFile;
 use crate::virtual_file::FileAttributes;
 use crate::virtual_file::FileType;
 use crate::virtual_file::VirtualFile;
@@ -37,6 +38,7 @@ pub trait VirtualFilesystem: Send + Sync {
     async fn read(&self, ino: Inode, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
     async fn read_directory(&self, ino: Inode, offset: u64) -> Result<ReadDirStream, JjError>;
     async fn read_link(&self, ino: Inode) -> Result<PathBuf, JjError>;
+    async fn create(&self, parent: Inode, file: CreateFile) -> Result<FileAttributes, JjError>;
 }
 
 pub struct PathMappedVfs<P: PathMapper> {
@@ -162,6 +164,15 @@ impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
             tracing::error!(path = %format_args!("./{}", path.display()), error = %err, "Failed to read symlink");
         })
     }
+
+    #[tracing::instrument(skip(self))]
+    async fn create(&self, parent: Inode, file: CreateFile) -> Result<FileAttributes, JjError> {
+        let path = self.get_path(parent)?;
+        let virtual_file = self.get_virtual_file(&path).await?;
+        virtual_file.create(file).await.inspect_err(|err| {
+            tracing::error!(path = %format_args!("./{}", path.display()), error = %err, "Failed to create file");
+        })
+    }
 }
 
 #[cfg(test)]
@@ -170,6 +181,7 @@ mod tests {
     use std::path::Path;
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::time::SystemTime;
 
     use async_trait::async_trait;
@@ -185,7 +197,7 @@ mod tests {
 
     enum MockVirtualFile {
         File(Vec<u8>),
-        Directory(HashMap<String, Arc<MockVirtualFile>>),
+        Directory(Arc<Mutex<HashMap<String, Arc<MockVirtualFile>>>>),
         Symlink(PathBuf),
     }
 
@@ -202,6 +214,7 @@ mod tests {
         async fn list(&self) -> Result<DirectoryStream, JjError> {
             match &**self {
                 MockVirtualFile::Directory(entries) => {
+                    let entries = entries.lock().unwrap();
                     let children = entries
                         .iter()
                         .map(|(name, file)| {
@@ -218,6 +231,50 @@ mod tests {
                         .collect::<Vec<_>>();
                     let stream: DirectoryStream = Box::pin(stream::iter(children));
                     Ok(stream)
+                }
+                MockVirtualFile::File(_) | MockVirtualFile::Symlink(_) => {
+                    Err(JjError::NotADirectory)
+                }
+            }
+        }
+
+        async fn create(&self, file: CreateFile) -> Result<FileAttributes, JjError> {
+            match &**self {
+                MockVirtualFile::Directory(entries) => {
+                    let name = file.name().to_string();
+                    let (new_file, attrs) = match file {
+                        CreateFile::File { .. } => (
+                            Arc::new(MockVirtualFile::File(Vec::new())),
+                            FileAttributes {
+                                size: 0,
+                                file_type: FileType::File,
+                                created: SystemTime::now(),
+                                modified: SystemTime::now(),
+                            },
+                        ),
+                        CreateFile::Directory { .. } => (
+                            Arc::new(MockVirtualFile::Directory(Arc::new(Mutex::new(
+                                HashMap::new(),
+                            )))),
+                            FileAttributes {
+                                size: 0,
+                                file_type: FileType::Directory,
+                                created: SystemTime::now(),
+                                modified: SystemTime::now(),
+                            },
+                        ),
+                        CreateFile::Symlink { target, .. } => (
+                            Arc::new(MockVirtualFile::Symlink(PathBuf::from(target))),
+                            FileAttributes {
+                                size: 0,
+                                file_type: FileType::Symlink,
+                                created: SystemTime::now(),
+                                modified: SystemTime::now(),
+                            },
+                        ),
+                    };
+                    entries.lock().unwrap().insert(name, new_file);
+                    Ok(attrs)
                 }
                 MockVirtualFile::File(_) | MockVirtualFile::Symlink(_) => {
                     Err(JjError::NotADirectory)
@@ -274,11 +331,13 @@ mod tests {
             let mut current_entry = self.root.clone();
             for part in path.iter() {
                 let part_str = part.to_str().ok_or(JjError::InvalidPath)?;
-                if let MockVirtualFile::Directory(entries) = &*current_entry {
-                    current_entry = entries.get(part_str).ok_or(JjError::NotFound)?.clone();
-                } else {
-                    return Err(JjError::NotFound);
-                }
+                let next_entry = match &*current_entry {
+                    MockVirtualFile::Directory(entries) => {
+                        entries.lock().unwrap().get(part_str).ok_or(JjError::NotFound)?.clone()
+                    }
+                    _ => return Err(JjError::NotFound),
+                };
+                current_entry = next_entry;
             }
             Ok(Box::new(current_entry))
         }
@@ -302,10 +361,14 @@ mod tests {
         );
         root_children.insert(
             "dir".to_string(),
-            Arc::new(MockVirtualFile::Directory(dir_children)),
+            Arc::new(MockVirtualFile::Directory(Arc::new(Mutex::new(
+                dir_children,
+            )))),
         );
 
-        let root = Arc::new(MockVirtualFile::Directory(root_children));
+        let root = Arc::new(MockVirtualFile::Directory(Arc::new(Mutex::new(
+            root_children,
+        ))));
         let mapper = MockPathMapper { root };
 
         PathMappedVfs::new(mapper)
@@ -419,5 +482,104 @@ mod tests {
         let file_ino = fs.get_ino(ROOT_INODE, "file.txt").await.unwrap();
         let result = fs.read_link(file_ino).await;
         assert!(matches!(result, Err(JjError::NotASymlink)));
+    }
+
+    #[tokio::test]
+    async fn test_create_file() {
+        let fs = setup_test_vfs();
+        let dir_ino = fs.get_ino(ROOT_INODE, "dir").await.unwrap();
+        let attr = fs
+            .create(
+                dir_ino,
+                CreateFile::File {
+                    name: "new_file.txt".to_string(),
+                    executable: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(attr.size, 0);
+        assert!(matches!(attr.file_type, FileType::File));
+
+        let file_ino = fs.get_ino(dir_ino, "new_file.txt").await.unwrap();
+        let attr = fs.get_attributes(file_ino).await.unwrap();
+        assert_eq!(attr.size, 0);
+        assert!(matches!(attr.file_type, FileType::File));
+
+        let content = fs.read(file_ino, 0, 10).await.unwrap();
+        assert_eq!(&*content, b"");
+    }
+
+    #[tokio::test]
+    async fn test_create_directory() {
+        let fs = setup_test_vfs();
+        let dir_ino = fs.get_ino(ROOT_INODE, "dir").await.unwrap();
+        let attr = fs
+            .create(
+                dir_ino,
+                CreateFile::Directory {
+                    name: "new_dir".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(attr.size, 0);
+        assert!(matches!(attr.file_type, FileType::Directory));
+
+        let new_dir_ino = fs.get_ino(dir_ino, "new_dir").await.unwrap();
+        let attr = fs.get_attributes(new_dir_ino).await.unwrap();
+        assert!(matches!(attr.file_type, FileType::Directory));
+    }
+
+    #[tokio::test]
+    async fn test_create_symlink() {
+        let fs = setup_test_vfs();
+        let dir_ino = fs.get_ino(ROOT_INODE, "dir").await.unwrap();
+        let attr = fs
+            .create(
+                dir_ino,
+                CreateFile::Symlink {
+                    name: "new_symlink.txt".to_string(),
+                    target: "nested.txt".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(attr.file_type, FileType::Symlink));
+
+        let symlink_ino = fs.get_ino(dir_ino, "new_symlink.txt").await.unwrap();
+        let target = fs.read_link(symlink_ino).await.unwrap();
+        assert_eq!(target, PathBuf::from("nested.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_create_not_a_directory() {
+        let fs = setup_test_vfs();
+        let file_ino = fs.get_ino(ROOT_INODE, "file.txt").await.unwrap();
+        let res = fs
+            .create(
+                file_ino,
+                CreateFile::File {
+                    name: "subfile.txt".to_string(),
+                    executable: false,
+                },
+            )
+            .await;
+        assert!(matches!(res, Err(JjError::NotADirectory)));
+    }
+
+    #[tokio::test]
+    async fn test_create_not_found() {
+        let fs = setup_test_vfs();
+        let res = fs
+            .create(
+                999,
+                CreateFile::File {
+                    name: "file.txt".to_string(),
+                    executable: false,
+                },
+            )
+            .await;
+        assert!(matches!(res, Err(JjError::NotFound)));
     }
 }

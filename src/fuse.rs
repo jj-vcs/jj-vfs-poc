@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
@@ -10,6 +11,7 @@ use futures::StreamExt as _;
 use crate::jj_error::JjError;
 use crate::jj_error::JjResult;
 use crate::vfs::VirtualFilesystem;
+use crate::virtual_file::CreateFile;
 use crate::virtual_file::FileAttributes;
 
 const TTL: Duration = Duration::from_secs(1);
@@ -137,6 +139,110 @@ impl<FS: VirtualFilesystem + 'static> Filesystem for JjFuse<FS> {
             }
         });
     }
+
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
+    fn mknod(
+        &self,
+        _req: &Request,
+        parent: INodeNo,
+        name: &OsStr,
+        mode: u32,
+        _umask: u32,
+        _rdev: u32,
+        reply: ReplyEntry,
+    ) {
+        let fs = self.fs.clone();
+        let name = name.to_os_string();
+        self.rt_handle.spawn(async move {
+            let res: JjResult<_> = async {
+                let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
+                if (mode & libc::S_IFMT) != libc::S_IFREG {
+                    return Err(JjError::OperationNotSupported);
+                }
+                let executable = (mode & (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH)) != 0;
+
+                let create_file = CreateFile::File {
+                    name: name_str.to_string(),
+                    executable,
+                };
+
+                let attr = fs.create(parent.0, create_file).await?;
+                let child_ino = fs.get_ino(parent.0, name_str).await?;
+                Ok(attr.to_fuse(INodeNo(child_ino)))
+            }
+            .await;
+
+            match res {
+                Ok(attr) => reply.entry(&TTL, &attr, fuser::Generation(0)),
+                Err(err) => reply.error(err.into()),
+            }
+        });
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
+    fn mkdir(
+        &self,
+        _req: &Request,
+        parent: INodeNo,
+        name: &OsStr,
+        _mode: u32,
+        _umask: u32,
+        reply: ReplyEntry,
+    ) {
+        let fs = self.fs.clone();
+        let name = name.to_os_string();
+        self.rt_handle.spawn(async move {
+            let res: JjResult<_> = async {
+                let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
+                let create_file = CreateFile::Directory {
+                    name: name_str.to_string(),
+                };
+
+                let attr = fs.create(parent.0, create_file).await?;
+                let child_ino = fs.get_ino(parent.0, name_str).await?;
+                Ok(attr.to_fuse(INodeNo(child_ino)))
+            }
+            .await;
+
+            match res {
+                Ok(attr) => reply.entry(&TTL, &attr, fuser::Generation(0)),
+                Err(err) => reply.error(err.into()),
+            }
+        });
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
+    fn symlink(
+        &self,
+        _req: &Request,
+        parent: INodeNo,
+        name: &OsStr,
+        link: &Path,
+        reply: ReplyEntry,
+    ) {
+        let fs = self.fs.clone();
+        let name = name.to_os_string();
+        let link_target = link.to_string_lossy().into_owned();
+        self.rt_handle.spawn(async move {
+            let res: JjResult<_> = async {
+                let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
+                let create_file = CreateFile::Symlink {
+                    name: name_str.to_string(),
+                    target: link_target,
+                };
+
+                let attr = fs.create(parent.0, create_file).await?;
+                let child_ino = fs.get_ino(parent.0, name_str).await?;
+                Ok(attr.to_fuse(INodeNo(child_ino)))
+            }
+            .await;
+
+            match res {
+                Ok(attr) => reply.entry(&TTL, &attr, fuser::Generation(0)),
+                Err(err) => reply.error(err.into()),
+            }
+        });
+    }
 }
 
 impl FileAttributes {
@@ -185,6 +291,7 @@ impl From<JjError> for Errno {
             JjError::NotAFile => Errno::EISDIR,
             JjError::NotASymlink => Errno::EINVAL,
             JjError::Readonly => Errno::EROFS,
+            JjError::OperationNotSupported => Errno::ENOSYS,
             _ => Errno::EIO,
         }
     }

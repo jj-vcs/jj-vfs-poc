@@ -198,3 +198,76 @@ async fn test_vfs_mount() {
     // Explicitly unmount/drop session
     drop(session);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_vfs_mount_write() {
+    // 1. Set up a real test jj repository with commits and files
+    let (_temp_dir, repo, _commit_id) = test_helpers::setup_test_repo().await;
+
+    // 2. Initialize the mapper and PathMappedVfs
+    let mapper = AllCommitsPathMapper::new(repo);
+    let fs = PathMappedVfs::new(mapper);
+
+    // 3. Create a temporary mountpoint directory
+    let mount_dir = tempfile::tempdir().expect("Failed to create tempdir");
+    let mountpoint = mount_dir.path().to_path_buf();
+
+    // 4. Mount the filesystem as RW
+    let mut config = fuser::Config::default();
+    config.mount_options = vec![
+        fuser::MountOption::RW,
+        fuser::MountOption::FSName("jjfs_test_rw".to_string()),
+    ];
+
+    let session = fuser::spawn_mount(
+        jjfsd::fuse::JjFuse::new(Arc::new(fs), tokio::runtime::Handle::current()),
+        &mountpoint,
+        &config,
+    )
+    .expect("Failed to mount filesystem");
+
+    // 5. Verify the workspace directory exists
+    let workspace_dir = mountpoint.join("workspaces").join("default");
+
+    // Wait a bit or retry to make sure FUSE has finished mounting and is ready.
+    let mut success = false;
+    for _ in 0..20 {
+        if workspace_dir.exists() {
+            success = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(success, "Mount point did not become ready in time");
+
+    // 6. Create a new empty file via mknod
+    let new_file_path = workspace_dir.join("new_file.txt");
+    std::fs::File::create(&new_file_path).expect("Failed to create new_file.txt");
+    assert!(new_file_path.exists());
+    let metadata = new_file_path.metadata().expect("Failed to get metadata");
+    assert!(metadata.is_file());
+    assert_eq!(metadata.len(), 0);
+
+    // 7. Create a new directory via mkdir
+    let new_dir_path = workspace_dir.join("new_dir");
+    std::fs::create_dir(&new_dir_path).expect("Failed to create new_dir");
+    assert!(new_dir_path.exists());
+    let dir_metadata = new_dir_path.metadata().expect("Failed to get metadata");
+    assert!(dir_metadata.is_dir());
+
+    // 8. Create a new symlink
+    let new_symlink_path = workspace_dir.join("new_symlink");
+    std::os::unix::fs::symlink("new_file.txt", &new_symlink_path)
+        .expect("Failed to create new_symlink");
+    assert!(new_symlink_path.exists());
+    let symlink_metadata =
+        std::fs::symlink_metadata(&new_symlink_path).expect("Failed to get symlink metadata");
+    assert!(symlink_metadata.file_type().is_symlink());
+    let symlink_target =
+        std::fs::read_link(&new_symlink_path).expect("Failed to read symlink");
+    assert_eq!(symlink_target, Path::new("new_file.txt").to_path_buf());
+
+    // Explicitly unmount/drop session
+    drop(session);
+}
+
