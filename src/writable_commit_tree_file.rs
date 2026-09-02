@@ -46,7 +46,6 @@ impl WritableCommitTreeFile {
         ReadonlyCommitTreeFile::new(&self.repo, wc_commit_id, self.path.clone()).await
     }
 
-    #[allow(dead_code)] // TODO: this will be used in the future for create, write and delete function
     async fn update_file(
         repo: Arc<ReadonlyRepo>,
         workspace_name: WorkspaceNameBuf,
@@ -156,6 +155,84 @@ impl VirtualFile for WritableCommitTreeFile {
 
     #[tracing::instrument(skip(self))]
     async fn delete(&self) -> JjResult<()> {
-        todo!()
+        let path = RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
+
+        let wc_commit_id = self
+            .repo
+            .view()
+            .get_wc_commit_id(&self.workspace_name)
+            .cloned()
+            .ok_or(JjError::NotFound)?;
+        let commit = self.repo.store().get_commit_async(&wc_commit_id).await?;
+
+        let current_value = commit.tree().path_value(&path).await?;
+        let resolved_val = current_value.as_resolved().ok_or(JjError::NotFound)?;
+        if resolved_val.is_none() {
+            return Err(JjError::NotFound);
+        }
+
+        Self::update_file(
+            self.repo.clone(),
+            self.workspace_name.clone(),
+            path,
+            None,
+            "Delete file".to_string(),
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use futures::StreamExt as _;
+
+    use super::*;
+    use crate::test_helpers::setup_test_repo;
+    use crate::virtual_file::DirectoryEntry;
+    use crate::virtual_file::VirtualFile;
+
+    #[tokio::test]
+    async fn test_delete_file() {
+        let (_temp_dir, repo, _commit_id) = setup_test_repo().await;
+        let commit_tree = WritableCommitTreeFile::new(
+            repo.clone(),
+            WorkspaceNameBuf::from("default"),
+            PathBuf::from("file1.txt"),
+        );
+
+        commit_tree.delete().await.unwrap();
+
+        let reloaded_repo = repo.reload_at_head().await.unwrap();
+        let wc_commits = reloaded_repo.view().wc_commit_ids();
+        let new_commit_id = wc_commits.values().next().cloned().unwrap();
+
+        let reloaded_tree = ReadonlyCommitTreeFile::new(
+            &reloaded_repo,
+            new_commit_id,
+            PathBuf::from(""),
+        )
+        .await
+        .unwrap();
+
+        let stream = reloaded_tree.list().await.unwrap();
+        let root_files: Vec<DirectoryEntry> = stream.collect().await;
+
+        assert_eq!(root_files.len(), 2);
+        assert!(root_files.iter().all(|f| f.name != "file1.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_file_not_found() {
+        let (_temp_dir, repo, _commit_id) = setup_test_repo().await;
+        let commit_tree = WritableCommitTreeFile::new(
+            repo,
+            WorkspaceNameBuf::from("default"),
+            PathBuf::from("nonexistent.txt"),
+        );
+
+        let res = commit_tree.delete().await;
+        assert!(matches!(res, Err(JjError::NotFound)));
     }
 }
