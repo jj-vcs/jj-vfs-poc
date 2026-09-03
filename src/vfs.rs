@@ -37,6 +37,7 @@ pub trait VirtualFilesystem: Send + Sync {
     async fn read(&self, ino: Inode, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
     async fn read_directory(&self, ino: Inode, offset: u64) -> Result<ReadDirStream, JjError>;
     async fn read_link(&self, ino: Inode) -> Result<PathBuf, JjError>;
+    async fn write(&self, ino: Inode, offset: u64, data: &[u8]) -> Result<u32, JjError>;
 }
 
 pub struct PathMappedVfs<P: PathMapper> {
@@ -162,6 +163,15 @@ impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
             tracing::error!(path = %format_args!("./{}", path.display()), error = %err, "Failed to read symlink");
         })
     }
+
+    #[tracing::instrument(skip(self, data))]
+    async fn write(&self, ino: Inode, offset: u64, data: &[u8]) -> Result<u32, JjError> {
+        let path = self.get_path(ino)?;
+        let virtual_file = self.get_virtual_file(&path).await?;
+        virtual_file.write(offset, data).await.inspect_err(|err| {
+            tracing::error!(path = %format_args!("./{}", path.display()), error = %err, "Failed to write to file");
+        })
+    }
 }
 
 #[cfg(test)]
@@ -170,6 +180,7 @@ mod tests {
     use std::path::Path;
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::time::SystemTime;
 
     use async_trait::async_trait;
@@ -184,7 +195,7 @@ mod tests {
     use crate::virtual_file::VirtualFile;
 
     enum MockVirtualFile {
-        File(Vec<u8>),
+        File(Mutex<Vec<u8>>),
         Directory(HashMap<String, Arc<MockVirtualFile>>),
         Symlink(PathBuf),
     }
@@ -193,7 +204,10 @@ mod tests {
     impl VirtualFile for Arc<MockVirtualFile> {
         async fn read(&self) -> Result<Pin<Box<dyn futures::AsyncRead + Send>>, JjError> {
             match &**self {
-                MockVirtualFile::File(content) => Ok(Box::pin(Cursor::new(content.clone()))),
+                MockVirtualFile::File(content) => {
+                    let content = content.lock().unwrap().clone();
+                    Ok(Box::pin(Cursor::new(content)))
+                }
                 MockVirtualFile::Directory(_) => Err(JjError::NotAFile),
                 MockVirtualFile::Symlink(_) => Err(JjError::NotAFile),
             }
@@ -235,7 +249,7 @@ mod tests {
         async fn attributes(&self) -> Result<FileAttributes, JjError> {
             match &**self {
                 MockVirtualFile::File(content) => Ok(FileAttributes {
-                    size: content.len() as u64,
+                    size: content.lock().unwrap().len() as u64,
                     file_type: FileType::File,
                     created: SystemTime::now(),
                     modified: SystemTime::now(),
@@ -260,6 +274,22 @@ mod tests {
                 MockVirtualFile::File(_) => Ok(FileType::File),
                 MockVirtualFile::Directory(_) => Ok(FileType::Directory),
                 MockVirtualFile::Symlink(_) => Ok(FileType::Symlink),
+            }
+        }
+
+        async fn write(&self, offset: u64, data: &[u8]) -> Result<u32, JjError> {
+            match &**self {
+                MockVirtualFile::File(content) => {
+                    let mut content = content.lock().unwrap();
+                    let offset = offset as usize;
+                    if offset + data.len() > content.len() {
+                        content.resize(offset + data.len(), 0);
+                    }
+                    content[offset..offset + data.len()].copy_from_slice(data);
+                    Ok(data.len() as u32)
+                }
+                MockVirtualFile::Directory(_) => Err(JjError::NotAFile),
+                MockVirtualFile::Symlink(_) => Err(JjError::NotAFile),
             }
         }
     }
@@ -288,7 +318,7 @@ mod tests {
         let mut root_children = HashMap::new();
         root_children.insert(
             "file.txt".to_string(),
-            Arc::new(MockVirtualFile::File(b"hello world".to_vec())),
+            Arc::new(MockVirtualFile::File(Mutex::new(b"hello world".to_vec()))),
         );
         root_children.insert(
             "symlink.txt".to_string(),
@@ -298,7 +328,7 @@ mod tests {
         let mut dir_children = HashMap::new();
         dir_children.insert(
             "nested.txt".to_string(),
-            Arc::new(MockVirtualFile::File(b"nested content".to_vec())),
+            Arc::new(MockVirtualFile::File(Mutex::new(b"nested content".to_vec()))),
         );
         root_children.insert(
             "dir".to_string(),
@@ -419,5 +449,34 @@ mod tests {
         let file_ino = fs.get_ino(ROOT_INODE, "file.txt").await.unwrap();
         let result = fs.read_link(file_ino).await;
         assert!(matches!(result, Err(JjError::NotASymlink)));
+    }
+
+    #[tokio::test]
+    async fn test_write_file() {
+        let fs = setup_test_vfs();
+        let file_ino = fs.get_ino(ROOT_INODE, "file.txt").await.unwrap();
+        let bytes_written = fs.write(file_ino, 6, b"rust!").await.unwrap();
+        assert_eq!(bytes_written, 5);
+
+        let content = fs.read(file_ino, 0, 11).await.unwrap();
+        assert_eq!(&*content, b"hello rust!");
+
+        let attr = fs.get_attributes(file_ino).await.unwrap();
+        assert_eq!(attr.size, 11);
+    }
+
+    #[tokio::test]
+    async fn test_write_file_not_a_file() {
+        let fs = setup_test_vfs();
+        let dir_ino = fs.get_ino(ROOT_INODE, "dir").await.unwrap();
+        let result = fs.write(dir_ino, 0, b"data").await;
+        assert!(matches!(result, Err(JjError::NotAFile)));
+    }
+
+    #[tokio::test]
+    async fn test_write_file_not_found() {
+        let fs = setup_test_vfs();
+        let result = fs.write(999, 0, b"data").await;
+        assert!(matches!(result, Err(JjError::NotFound)));
     }
 }

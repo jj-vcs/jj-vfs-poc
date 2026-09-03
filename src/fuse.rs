@@ -86,6 +86,29 @@ impl<FS: VirtualFilesystem + 'static> Filesystem for JjFuse<FS> {
         });
     }
 
+    #[tracing::instrument(level = "debug", skip(self, _req, data, reply))]
+    fn write(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
+        data: &[u8],
+        _write_flags: WriteFlags,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
+        reply: ReplyWrite,
+    ) {
+        let fs = self.fs.clone();
+        let data = data.to_vec();
+        self.rt_handle.spawn(async move {
+            match fs.write(ino.0, offset, &data).await {
+                Ok(bytes_written) => reply.written(bytes_written),
+                Err(err) => reply.error(err.into()),
+            }
+        });
+    }
+
     #[tracing::instrument(level = "debug", skip(self, _req, reply))]
     fn readdir(
         &self,
