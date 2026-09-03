@@ -198,3 +198,102 @@ async fn test_vfs_mount() {
     // Explicitly unmount/drop session
     drop(session);
 }
+
+#[tokio::test]
+async fn test_vfs_delete_real_repo_files() {
+    // 1. Set up a real test jj repository with commits and files
+    let (_temp_dir, repo, commit_id) = test_helpers::setup_test_repo().await;
+
+    // 2. Initialize the mapper and PathMappedVfs
+    let mapper = AllCommitsPathMapper::new(repo);
+    let fs = PathMappedVfs::new(mapper);
+
+    // 3. Look up "workspaces" under root, then "default" under "workspaces"
+    let workspaces_ino = fs.get_ino(ROOT_INODE, "workspaces").await.unwrap();
+    let default_ino = fs.get_ino(workspaces_ino, "default").await.unwrap();
+
+    // 4. Look up "file1.txt" inside "default"
+    let file1_ino = fs.get_ino(default_ino, "file1.txt").await.unwrap();
+    let file1_attr = fs.get_attributes(file1_ino).await.unwrap();
+    assert_eq!(file1_attr.size, 15);
+
+    // 5. Delete "file1.txt"
+    fs.delete(default_ino, "file1.txt").await.unwrap();
+
+    // 6. Verify file1_ino attributes return NotFound
+    let res = fs.get_attributes(file1_ino).await;
+    assert!(matches!(res, Err(jjfsd::jj_error::JjError::NotFound)));
+
+    // 7. Verify read_directory no longer includes file1.txt
+    use futures::StreamExt as _;
+    let stream = fs.read_directory(default_ino, 0).await.unwrap();
+    let entries: Vec<_> = stream.collect().await;
+    assert!(entries.into_iter().all(|e| e.unwrap().name != "file1.txt"));
+
+    // 8. Verify deleting non-existent file returns NotFound
+    let res = fs.delete(default_ino, "nonexistent.txt").await;
+    assert!(matches!(res, Err(jjfsd::jj_error::JjError::NotFound)));
+
+    // 9. Verify deleting a file under commits (readonly) returns Readonly
+    let commits_ino = fs.get_ino(ROOT_INODE, "commits").await.unwrap();
+    let hex = commit_id.hex();
+    let commit_ino = fs.get_ino(commits_ino, &hex).await.unwrap();
+    let res = fs.delete(commit_ino, "file1.txt").await;
+    assert!(matches!(res, Err(jjfsd::jj_error::JjError::Readonly)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_vfs_mount_delete() {
+    // 1. Set up a real test jj repository with commits and files
+    let (_temp_dir, repo, _commit_id) = test_helpers::setup_test_repo().await;
+
+    // 2. Initialize the mapper and PathMappedVfs
+    let mapper = AllCommitsPathMapper::new(repo);
+    let fs = PathMappedVfs::new(mapper);
+
+    // 3. Create a temporary mountpoint directory
+    let mount_dir = tempfile::tempdir().expect("Failed to create tempdir");
+    let mountpoint = mount_dir.path().to_path_buf();
+
+    // 4. Mount the filesystem as RW
+    let mut config = fuser::Config::default();
+    config.mount_options = vec![
+        fuser::MountOption::RW,
+        fuser::MountOption::FSName("jjfs_test_delete".to_string()),
+    ];
+
+    let session = fuser::spawn_mount(
+        jjfsd::fuse::JjFuse::new(Arc::new(fs), tokio::runtime::Handle::current()),
+        &mountpoint,
+        &config,
+    )
+    .expect("Failed to mount filesystem");
+
+    // 5. Verify the workspace directory exists
+    let workspace_dir = mountpoint.join("workspaces").join("default");
+
+    let mut success = false;
+    for _ in 0..20 {
+        if workspace_dir.exists() {
+            success = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(success, "Mount point did not become ready in time");
+
+    // 6. Delete file1.txt via std::fs::remove_file
+    let file1_path = workspace_dir.join("file1.txt");
+    assert!(file1_path.exists());
+    std::fs::remove_file(&file1_path).expect("Failed to remove file1.txt");
+    assert!(!file1_path.exists());
+
+    // 7. Verify removing nonexistent file fails
+    let nonexistent = workspace_dir.join("nonexistent.txt");
+    let err =
+        std::fs::remove_file(&nonexistent).expect_err("Expected error deleting nonexistent file");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    // Explicitly unmount/drop session
+    drop(session);
+}

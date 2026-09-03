@@ -37,6 +37,7 @@ pub trait VirtualFilesystem: Send + Sync {
     async fn read(&self, ino: Inode, offset: u64, size: u32) -> Result<Box<[u8]>, JjError>;
     async fn read_directory(&self, ino: Inode, offset: u64) -> Result<ReadDirStream, JjError>;
     async fn read_link(&self, ino: Inode) -> Result<PathBuf, JjError>;
+    async fn delete(&self, parent: Inode, name: &str) -> Result<(), JjError>;
 }
 
 pub struct PathMappedVfs<P: PathMapper> {
@@ -162,6 +163,15 @@ impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
             tracing::error!(path = %format_args!("./{}", path.display()), error = %err, "Failed to read symlink");
         })
     }
+
+    #[tracing::instrument(skip(self))]
+    async fn delete(&self, parent: Inode, name: &str) -> Result<(), JjError> {
+        let path = self.get_path(parent)?.join(name);
+        let virtual_file = self.get_virtual_file(&path).await?;
+        virtual_file.delete().await.inspect_err(|err| {
+            tracing::error!(path = %format_args!("./{}", path.display()), error = %err, "Failed to delete file");
+        })
+    }
 }
 
 #[cfg(test)]
@@ -184,16 +194,30 @@ mod tests {
     use crate::virtual_file::VirtualFile;
 
     enum MockVirtualFile {
-        File(Vec<u8>),
+        File(std::sync::atomic::AtomicBool, Vec<u8>),
         Directory(HashMap<String, Arc<MockVirtualFile>>),
         Symlink(PathBuf),
+    }
+
+    impl MockVirtualFile {
+        fn new_file(content: &[u8]) -> Arc<Self> {
+            Arc::new(Self::File(
+                std::sync::atomic::AtomicBool::new(false),
+                content.to_vec(),
+            ))
+        }
     }
 
     #[async_trait]
     impl VirtualFile for Arc<MockVirtualFile> {
         async fn read(&self) -> Result<Pin<Box<dyn futures::AsyncRead + Send>>, JjError> {
             match &**self {
-                MockVirtualFile::File(content) => Ok(Box::pin(Cursor::new(content.clone()))),
+                MockVirtualFile::File(deleted, content) => {
+                    if deleted.load(std::sync::atomic::Ordering::SeqCst) {
+                        return Err(JjError::NotFound);
+                    }
+                    Ok(Box::pin(Cursor::new(content.clone())))
+                }
                 MockVirtualFile::Directory(_) => Err(JjError::NotAFile),
                 MockVirtualFile::Symlink(_) => Err(JjError::NotAFile),
             }
@@ -206,7 +230,7 @@ mod tests {
                         .iter()
                         .map(|(name, file)| {
                             let file_type = match &**file {
-                                MockVirtualFile::File(_) => FileType::File,
+                                MockVirtualFile::File(..) => FileType::File,
                                 MockVirtualFile::Directory(_) => FileType::Directory,
                                 MockVirtualFile::Symlink(_) => FileType::Symlink,
                             };
@@ -219,7 +243,7 @@ mod tests {
                     let stream: DirectoryStream = Box::pin(stream::iter(children));
                     Ok(stream)
                 }
-                MockVirtualFile::File(_) | MockVirtualFile::Symlink(_) => {
+                MockVirtualFile::File(..) | MockVirtualFile::Symlink(_) => {
                     Err(JjError::NotADirectory)
                 }
             }
@@ -234,12 +258,17 @@ mod tests {
 
         async fn attributes(&self) -> Result<FileAttributes, JjError> {
             match &**self {
-                MockVirtualFile::File(content) => Ok(FileAttributes {
-                    size: content.len() as u64,
-                    file_type: FileType::File,
-                    created: SystemTime::now(),
-                    modified: SystemTime::now(),
-                }),
+                MockVirtualFile::File(deleted, content) => {
+                    if deleted.load(std::sync::atomic::Ordering::SeqCst) {
+                        return Err(JjError::NotFound);
+                    }
+                    Ok(FileAttributes {
+                        size: content.len() as u64,
+                        file_type: FileType::File,
+                        created: SystemTime::now(),
+                        modified: SystemTime::now(),
+                    })
+                }
                 MockVirtualFile::Directory(_) => Ok(FileAttributes {
                     size: 0,
                     file_type: FileType::Directory,
@@ -257,9 +286,28 @@ mod tests {
 
         async fn file_type(&self) -> Result<FileType, JjError> {
             match &**self {
-                MockVirtualFile::File(_) => Ok(FileType::File),
+                MockVirtualFile::File(deleted, _) => {
+                    if deleted.load(std::sync::atomic::Ordering::SeqCst) {
+                        return Err(JjError::NotFound);
+                    }
+                    Ok(FileType::File)
+                }
                 MockVirtualFile::Directory(_) => Ok(FileType::Directory),
                 MockVirtualFile::Symlink(_) => Ok(FileType::Symlink),
+            }
+        }
+
+        async fn delete(&self) -> Result<(), JjError> {
+            match &**self {
+                MockVirtualFile::File(deleted, _) => {
+                    if deleted.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        Err(JjError::NotFound)
+                    } else {
+                        Ok(())
+                    }
+                }
+                MockVirtualFile::Directory(_) => Err(JjError::Readonly),
+                MockVirtualFile::Symlink(_) => Err(JjError::Readonly),
             }
         }
     }
@@ -280,6 +328,11 @@ mod tests {
                     return Err(JjError::NotFound);
                 }
             }
+            if let MockVirtualFile::File(deleted, _) = &*current_entry
+                && deleted.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(JjError::NotFound);
+            }
             Ok(Box::new(current_entry))
         }
     }
@@ -288,7 +341,7 @@ mod tests {
         let mut root_children = HashMap::new();
         root_children.insert(
             "file.txt".to_string(),
-            Arc::new(MockVirtualFile::File(b"hello world".to_vec())),
+            MockVirtualFile::new_file(b"hello world"),
         );
         root_children.insert(
             "symlink.txt".to_string(),
@@ -298,7 +351,7 @@ mod tests {
         let mut dir_children = HashMap::new();
         dir_children.insert(
             "nested.txt".to_string(),
-            Arc::new(MockVirtualFile::File(b"nested content".to_vec())),
+            MockVirtualFile::new_file(b"nested content"),
         );
         root_children.insert(
             "dir".to_string(),
@@ -419,5 +472,42 @@ mod tests {
         let file_ino = fs.get_ino(ROOT_INODE, "file.txt").await.unwrap();
         let result = fs.read_link(file_ino).await;
         assert!(matches!(result, Err(JjError::NotASymlink)));
+    }
+
+    #[tokio::test]
+    async fn test_delete_file() {
+        let fs = setup_test_vfs();
+        let file_ino = fs.get_ino(ROOT_INODE, "file.txt").await.unwrap();
+        let attr = fs.get_attributes(file_ino).await.unwrap();
+        assert_eq!(attr.size, 11);
+
+        fs.delete(ROOT_INODE, "file.txt").await.unwrap();
+
+        let attr = fs.get_attributes(file_ino).await;
+        assert!(matches!(attr, Err(JjError::NotFound)));
+
+        let res = fs.delete(ROOT_INODE, "file.txt").await;
+        assert!(matches!(res, Err(JjError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_delete_file_not_found() {
+        let fs = setup_test_vfs();
+        let res = fs.delete(ROOT_INODE, "nonexistent.txt").await;
+        assert!(matches!(res, Err(JjError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_delete_file_parent_not_found() {
+        let fs = setup_test_vfs();
+        let res = fs.delete(999, "file.txt").await;
+        assert!(matches!(res, Err(JjError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_delete_file_readonly() {
+        let fs = setup_test_vfs();
+        let res = fs.delete(ROOT_INODE, "symlink.txt").await;
+        assert!(matches!(res, Err(JjError::Readonly)));
     }
 }

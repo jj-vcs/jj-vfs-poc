@@ -137,6 +137,41 @@ impl<FS: VirtualFilesystem + 'static> Filesystem for JjFuse<FS> {
             }
         });
     }
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
+    fn unlink(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let fs = self.fs.clone();
+        let name = name.to_os_string();
+        self.rt_handle.spawn(async move {
+            let res: JjResult<_> = async {
+                let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
+                fs.delete(parent.0, name_str).await
+            }
+            .await;
+
+            match res {
+                Ok(()) => reply.ok(),
+                Err(err) => reply.error(err.into()),
+            }
+        });
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, _req, reply))]
+    fn rmdir(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let fs = self.fs.clone();
+        let name = name.to_os_string();
+        self.rt_handle.spawn(async move {
+            let res: JjResult<_> = async {
+                let name_str = name.to_str().ok_or(JjError::InvalidPath)?;
+                fs.delete(parent.0, name_str).await
+            }
+            .await;
+
+            match res {
+                Ok(()) => reply.ok(),
+                Err(err) => reply.error(err.into()),
+            }
+        });
+    }
 }
 
 impl FileAttributes {
