@@ -2,26 +2,36 @@
 
 We would love to accept your patches and contributions to this project.
 
-## Before you begin
+---
 
-### Sign our Contributor License Agreement
+## Development & Code Quality
 
-Contributions to this project must be accompanied by a
+Before submitting changes, ensure that your code adheres to the project's quality standards:
+
 [Contributor License Agreement](https://cla.developers.google.com/about) (CLA).
 You (or your employer) retain the copyright to your contribution; this simply
 gives us permission to use and redistribute your contributions as part of the
 project.
 
-If you or your current employer have already signed the Google CLA (even if it
-was for a different project), you probably don't need to do it again.
+### 1. Code Formatting
+Format your code using nightly `rustfmt`:
+```bash
+cargo +nightly fmt --all -- --check
+```
 
-Visit <https://cla.developers.google.com/> to see your current agreements or to
-sign a new one.
+### 2. Linting
+Run Clippy without warnings:
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```
 
-### Review our Community Guidelines
+### 3. Testing
+Verify that all unit and integration tests pass:
+```bash
+cargo test
+```
 
-This project follows [Google's Open Source Community
-Guidelines](https://opensource.google/conduct/).
+---
 
 ## Contribution process
 
