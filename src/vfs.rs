@@ -45,7 +45,7 @@ impl<P: PathMapper> VirtualFilesystem for PathMappedVfs<P> {
     async fn read(&self, path: &Path, offset: u64, size: u32) -> Result<Box<[u8]>, JjError> {
         let virtual_file = self.path_mapper.get_entry(path).await?;
         let reader = virtual_file.read().await?;
-        let mut limited_stream = reader.take(offset); // TODO: handle proper seek()
+        let mut limited_stream = reader.take(offset); // TODO #61: handle proper seek()
         futures::io::copy(&mut limited_stream, &mut futures::io::sink()).await?;
         let original_reader = limited_stream.into_inner();
         let mut content = Vec::with_capacity(size as usize);

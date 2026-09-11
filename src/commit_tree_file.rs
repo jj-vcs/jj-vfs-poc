@@ -45,11 +45,11 @@ impl VirtualFile for CommitTreeFile {
             RepoPathBuf::from_relative_path(&self.path).map_err(|_| JjError::InvalidPath)?;
         let merged_val = self.commit.tree().path_value(&repo_path).await?;
 
-        let resolved_val = merged_val.as_resolved().ok_or(JjError::NotADirectory)?; // TODO: Files with conflicts should also be readable
+        let resolved_val = merged_val.as_resolved().ok_or(JjError::NotADirectory)?; // TODO #59: Files with conflicts should also be readable
         let file_id = match resolved_val {
             Some(TreeValue::File { id, .. }) => id,
             None => return Err(JjError::NotFound),
-            _ => return Err(JjError::NotAFile), /* TODO: do research on how to handle git
+            _ => return Err(JjError::NotAFile), /* TODO #60: do research on how to handle git
                                                  * submodules */
         };
 
@@ -77,8 +77,8 @@ impl VirtualFile for CommitTreeFile {
             .iter()
             .flat_map(|tree| tree.entries_non_recursive())
             .map(|entry| entry.name().to_owned())
-            .unique() // TODO: .skip of iterator may still have to iterate through all elements to eliminate
-            // duplicates (no proper pagination).
+            .unique() // TODO #63: .skip of iterator may still have to iterate through all elements to
+            // eliminate duplicates (no proper pagination).
             .map(|component| {
                 let merged_val: Merge<Option<TreeValue>> =
                     sub_trees.map(|tree| tree.value(&component).cloned());
@@ -88,7 +88,7 @@ impl VirtualFile for CommitTreeFile {
                         Some(TreeValue::Tree(_)) => FileType::Directory,
                         Some(TreeValue::File { .. }) => FileType::File,
                         Some(TreeValue::Symlink(_)) => FileType::Symlink,
-                        _ => FileType::File, // TODO: Handle all file types
+                        _ => FileType::File, // TODO #59, #60: Handle all file types
                     }
                 } else {
                     FileType::File
@@ -99,7 +99,7 @@ impl VirtualFile for CommitTreeFile {
                     file_type,
                 }
             })
-            .collect(); // TODO: No proper pagination here, since the entire iterator needs to be collected
+            .collect(); // TODO #63: No proper pagination here, since the entire iterator needs to be collected
 
         Ok(Box::pin(futures::stream::iter(files)))
     }
@@ -132,9 +132,9 @@ impl VirtualFile for CommitTreeFile {
             FileType::File => {
                 let mut reader = self.read().await?;
 
-                // TODO: we should be able to get the file size without having
-                // to read the entire file (requires changes in
-                // jj-lib).
+                // TODO #66: we should be able to get the file size without
+                // having to read the entire file (requires
+                // changes in jj-lib).
                 futures::io::copy(&mut reader, &mut futures::io::sink()).await?
             }
             FileType::Directory => 0,
@@ -147,7 +147,7 @@ impl VirtualFile for CommitTreeFile {
         Ok(FileAttributes {
             size,
             file_type,
-            created: UNIX_EPOCH, // TODO: implement proper timestamps
+            created: UNIX_EPOCH, // TODO #62: implement proper timestamps
             modified: UNIX_EPOCH,
         })
     }
@@ -160,14 +160,14 @@ impl VirtualFile for CommitTreeFile {
 
         let resolved_val = merged_val.as_resolved().ok_or(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "Conflicted path", /* TODO: support file conflicts to be shown in the
+            "Conflicted path", /* TODO #59: support file conflicts to be shown in the
                                 * filesystem */
         ))?;
         let file_type = match resolved_val {
             Some(TreeValue::Tree(_)) => FileType::Directory,
             Some(TreeValue::File { .. }) => FileType::File,
             Some(TreeValue::Symlink(_)) => FileType::Symlink,
-            _ => FileType::File, // TODO: Handle all file types
+            _ => FileType::File, // TODO #59, #60: Handle all file types
         };
         Ok(file_type)
     }

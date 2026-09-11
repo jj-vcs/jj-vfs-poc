@@ -29,7 +29,7 @@ impl VirtualFile for StaticDirectory {
         Ok(FileAttributes {
             size: 0,
             file_type: FileType::Directory,
-            created: UNIX_EPOCH, // TODO: implement proper timestamps
+            created: UNIX_EPOCH, // TODO #62: implement proper timestamps
             modified: UNIX_EPOCH,
         })
     }
