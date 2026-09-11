@@ -47,7 +47,7 @@ impl VirtualFile for CommitsDirectory {
                 })
                 .collect()
                 .await
-        }); // TODO: currently there is no proper pagination implemented here
+        }); // TODO #64: currently there is no proper pagination implemented here
         Ok(Box::pin(futures::stream::iter(commits)))
     }
 
@@ -56,7 +56,7 @@ impl VirtualFile for CommitsDirectory {
         Ok(FileAttributes {
             size: 0,
             file_type: FileType::Directory,
-            created: UNIX_EPOCH, // TODO: implement proper timestamps
+            created: UNIX_EPOCH, // TODO #62: implement proper timestamps
             modified: UNIX_EPOCH,
         })
     }
